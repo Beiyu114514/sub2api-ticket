@@ -1,0 +1,9 @@
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+sub2api-ticket
+web/node_modules/
+internal/static/dist/*
+!internal/static/dist/.gitkeep

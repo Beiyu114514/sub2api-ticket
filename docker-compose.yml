@@ -1,0 +1,22 @@
+services:
+  ticket:
+    build: .
+    # 镜像发布后可改为: image: ghcr.io/xxx/sub2api-ticket:latest
+    container_name: sub2api-ticket
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"   # 由前置反代（Caddy/Nginx）转发；如直接暴露请自行调整
+    environment:
+      # —— 必填 ——
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}            # 工单系统对外 HTTPS 地址，如 https://ticket.example.com
+      SUB2API_BASE_URL: ${SUB2API_BASE_URL}          # sub2api 站点地址，如 https://api.example.com
+      SUB2API_ADMIN_API_KEY: ${SUB2API_ADMIN_API_KEY} # sub2api 后台「管理员 API Key」
+      # —— 可选 ——
+      SUB2API_VERIFY_PATH: ${SUB2API_VERIFY_PATH:-/api/v1/auth/me}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-none}      # 与 sub2api 不同主域 iframe 嵌入必须 none
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}            # 首次启动创建本地兜底管理员，仅首次生效
+      TG_POLLING: ${TG_POLLING:-false}               # true 时用 long polling（调试）
+      TG_PROXY: ${TG_PROXY:-}                        # 服务器无法直连 api.telegram.org 时必填，如 socks5://127.0.0.1:7890
+    volumes:
+      - ./data:/data

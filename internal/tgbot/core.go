@@ -1,0 +1,417 @@
+package tgbot
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+
+	"sub2api-ticket/internal/model"
+	"sub2api-ticket/internal/store"
+)
+
+// Core TG 消息分发核心：管理员话题群 + 用户私聊两条链路。
+type Core struct {
+	G             *gorm.DB
+	S             *store.Settings
+	T             *store.TicketStore
+	PublicBaseURL string
+	TGProxy       string
+	Pool          *UpdateWorkerPool
+}
+
+func (c *Core) SubmitTask(task func()) bool {
+	if c.Pool != nil {
+		return c.Pool.Submit(task)
+	}
+	go task()
+	return true
+}
+
+func (c *Core) newBot() *Client { return NewWithProxy(c.S.BotToken(), c.TGProxy) }
+
+// DispatchRaw webhook 异步处理入口
+func (c *Core) DispatchRaw(body []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[tgbot] panic: %v", r)
+		}
+	}()
+	var u Update
+	if err := json.Unmarshal(body, &u); err != nil {
+		log.Printf("[tgbot] update 解析失败: %v", err)
+		return
+	}
+	bot := c.newBot()
+	if !bot.Valid() {
+		return
+	}
+	c.HandleUpdate(bot, u)
+}
+
+func (c *Core) HandleUpdate(bot *Client, u Update) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[tgbot] handle panic: %v", r)
+		}
+	}()
+	if u.CallbackQuery != nil {
+		c.onCallback(bot, u.CallbackQuery)
+		return
+	}
+	if u.Message == nil {
+		return
+	}
+	m := u.Message
+	if m.From != nil && m.From.IsBot {
+		return // 防回环
+	}
+	if m.Chat.ID == c.S.AdminGroupID() {
+		c.onAdminGroup(bot, m)
+		return
+	}
+	if m.Chat.Type == "private" {
+		c.onPrivate(bot, m)
+	}
+}
+
+// ———————— 管理员群 ————————
+
+var topicIDRe = regexp.MustCompile(`^#(\d+)`)
+
+func (c *Core) onAdminGroup(bot *Client, m *Message) {
+	// 手动创建的话题名若以 #工单ID 开头，自动建立映射
+	if m.ForumTopicCreated != nil {
+		if match := topicIDRe.FindStringSubmatch(m.ForumTopicCreated.Name); match != nil {
+			if id, err := strconv.ParseUint(match[1], 10, 64); err == nil {
+				var t model.Ticket
+				if err := c.G.First(&t, uint(id)).Error; err == nil {
+					c.G.Save(&model.TicketTopic{TicketID: t.ID, ChatID: m.Chat.ID, ThreadID: m.MessageThreadID})
+				}
+			}
+		}
+		return
+	}
+	text := strings.TrimSpace(m.Text)
+	if strings.HasPrefix(text, "/") {
+		c.onAdminCommand(bot, m, text)
+		return
+	}
+	if m.MessageThreadID == 0 || text == "" || m.IsAutomaticForward {
+		return
+	}
+	var tt model.TicketTopic
+	if err := c.G.Where("chat_id = ? AND thread_id = ?", m.Chat.ID, m.MessageThreadID).First(&tt).Error; err != nil {
+		return // 非工单话题
+	}
+	name := senderDisplayName(m.From)
+	_, _, err := c.T.AppendMessage(tt.TicketID, nil, "admin", name, text, "telegram", true)
+	if err != nil {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID,
+			Text: "⚠️ 同步失败：" + Escape(err.Error())})
+	}
+}
+
+func (c *Core) onAdminCommand(bot *Client, m *Message, text string) {
+	parts := strings.Fields(text)
+	cmd := strings.Split(parts[0], "@")[0] // 去掉 /cmd@botname 后缀
+	argID := uint(0)
+	if len(parts) > 1 {
+		if n, err := strconv.ParseUint(strings.TrimPrefix(parts[1], "#"), 10, 64); err == nil {
+			argID = uint(n)
+		}
+	}
+	switch cmd {
+	case "/id":
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID,
+			Text: fmt.Sprintf("本群 chat_id：<code>%d</code>（is_forum 话题群）", m.Chat.ID)})
+	case "/list":
+		c.adminList(bot, m)
+	case "/close":
+		if t := c.ticketForCmd(bot, m, argID); t != nil {
+			if changed, _ := c.T.ChangeStatus(t, "admin", senderDisplayName(m.From), "closed"); !changed {
+				c.reply(bot, m, "ℹ️ 工单已是关闭状态")
+			} else {
+				c.reply(bot, m, fmt.Sprintf("⚫️ 工单 #%d 已关闭", t.ID))
+			}
+		}
+	case "/open":
+		if t := c.ticketForCmd(bot, m, argID); t != nil {
+			if changed, _ := c.T.ChangeStatus(t, "admin", senderDisplayName(m.From), "open"); !changed {
+				c.reply(bot, m, "ℹ️ 工单未处于关闭状态")
+			} else {
+				c.reply(bot, m, fmt.Sprintf("🟢 工单 #%d 已重新开启", t.ID))
+			}
+		}
+	default:
+		c.reply(bot, m, "可用命令：/list 进行中工单 · /close [#id] · /open [#id] · /id")
+	}
+}
+
+func (c *Core) ticketForCmd(bot *Client, m *Message, argID uint) *model.Ticket {
+	id := argID
+	if id == 0 && m.MessageThreadID > 0 {
+		var tt model.TicketTopic
+		if err := c.G.Where("chat_id = ? AND thread_id = ?", m.Chat.ID, m.MessageThreadID).First(&tt).Error; err == nil {
+			id = tt.TicketID
+		}
+	}
+	if id == 0 {
+		c.reply(bot, m, "请提供工单号或在工单话题内使用")
+		return nil
+	}
+	var t model.Ticket
+	if err := c.G.First(&t, id).Error; err != nil {
+		return nil
+	}
+	return &t
+}
+
+func (c *Core) adminList(bot *Client, m *Message) {
+	var tickets []model.Ticket
+	c.G.Preload("User").Where("status IN ?", []string{"open", "pending"}).
+		Order("last_reply_at ASC").Limit(10).Find(&tickets)
+	if len(tickets) == 0 {
+		c.reply(bot, m, "✅ 暂无进行中的工单")
+		return
+	}
+	var b strings.Builder
+	b.WriteString("📋 进行中的工单：\n")
+	for _, t := range tickets {
+		uname := ""
+		if t.User != nil {
+			uname = t.User.Username
+		}
+		fmt.Fprintf(&b, "#%d %s · %s · %s（%s）\n", t.ID, StatusLabel(t.Status), Escape(Truncate(t.Subject, 40)), uname, t.LastReplyAt.Format("01-02 15:04"))
+	}
+	c.reply(bot, m, b.String())
+}
+
+// EnsureTopic 确保工单对应的管理员群话题存在，返回 chat_id/thread_id
+func (c *Core) EnsureTopic(bot *Client, ticket *model.Ticket) (int64, int, error) {
+	var tt model.TicketTopic
+	if err := c.G.Where("ticket_id = ?", ticket.ID).First(&tt).Error; err == nil {
+		return tt.ChatID, tt.ThreadID, nil
+	}
+	groupID := c.S.AdminGroupID()
+	if groupID == 0 {
+		return 0, 0, errors.New("未配置管理员群 ID")
+	}
+	name := Truncate(fmt.Sprintf("#%d %s", ticket.ID, ticket.Subject), 90)
+	thread, err := bot.CreateForumTopic(groupID, name)
+	if err != nil {
+		return 0, 0, fmt.Errorf("创建话题失败: %w", err)
+	}
+	c.G.Create(&model.TicketTopic{TicketID: ticket.ID, ChatID: groupID, ThreadID: thread})
+	return groupID, thread, nil
+}
+
+// SyncTopicStatus 工单关闭/重开时同步话题状态
+func (c *Core) SyncTopicStatus(bot *Client, ticket *model.Ticket, closed bool) {
+	var tt model.TicketTopic
+	if err := c.G.Where("ticket_id = ?", ticket.ID).First(&tt).Error; err != nil {
+		return
+	}
+	if closed {
+		_ = bot.CloseForumTopic(tt.ChatID, tt.ThreadID)
+	} else {
+		_ = bot.ReopenForumTopic(tt.ChatID, tt.ThreadID)
+	}
+}
+
+// ———————— 用户私聊 ————————
+
+func (c *Core) onPrivate(bot *Client, m *Message) {
+	text := strings.TrimSpace(m.Text)
+	if text == "" {
+		return // v1 只处理文本
+	}
+	if strings.HasPrefix(text, "/start") {
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/start"))
+		if strings.HasPrefix(arg, "bind_") {
+			c.bindUser(bot, m, strings.TrimPrefix(arg, "bind_"))
+			return
+		}
+		bot.SendMessage(SendMessageOpts{
+			ChatID: m.Chat.ID,
+			Text: "👋 你好！我是 sub2api 工单助手。\n\n" +
+				"在网页端绑定 Telegram 后，这里会推送你工单的新回复。\n" +
+				"直接回复消息即可同步到当前工单；/list 查看进行中的工单。",
+		})
+		return
+	}
+	if text == "/list" || text == "/tickets" {
+		c.listUserTickets(bot, m)
+		return
+	}
+	if strings.HasPrefix(text, "/") {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "未知命令。可用：/list 查看进行中的工单"})
+		return
+	}
+
+	u := c.userByChatID(m.Chat.ID)
+	if u == nil {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
+			Text: "⚠️ 尚未绑定。请先登录工单网页 → 设置 → 绑定 Telegram，再回到这里。"})
+		return
+	}
+
+	ticketID := c.pickTicket(u)
+	if ticketID == 0 {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
+			Text: "你当前没有进行中的工单。请到网页端创建工单后，再来这里回复。"})
+		return
+	}
+	_, _, err := c.T.AppendMessage(ticketID, u, "user", u.Username, text, "telegram", false)
+	if err == store.ErrTicketClosed {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "该工单已关闭，请到网页端重新开启后再回复。"})
+		return
+	}
+	if err != nil {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "⚠️ 发送失败，请稍后再试。"})
+		return
+	}
+	bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: fmt.Sprintf("✅ 已发送到工单 #%d", ticketID)})
+}
+
+// bindUser 处理 /start bind_<code>
+func (c *Core) bindUser(bot *Client, m *Message, code string) {
+	var bc model.BindCode
+	if err := c.G.Where("code = ?", code).First(&bc).Error; err != nil || time.Now().After(bc.ExpiresAt) {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "⚠️ 绑定码无效或已过期，请回到网页重新生成。"})
+		return
+	}
+	var u model.User
+	if err := c.G.First(&u, bc.UserID).Error; err != nil {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "⚠️ 用户不存在。"})
+		return
+	}
+	// 一个 TG 账号只能绑定一个工单用户：顶掉旧绑定
+	c.G.Model(&model.User{}).Where("tg_chat_id = ? AND id != ?", m.Chat.ID, u.ID).Update("tg_chat_id", 0)
+	c.G.Model(&u).Update("tg_chat_id", m.Chat.ID)
+	c.G.Delete(&bc)
+	c.G.Save(&model.UserChatState{ChatID: m.Chat.ID, CurrentTicketID: c.pickTicket(&u), UpdatedAt: time.Now()})
+
+	bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
+		Text: fmt.Sprintf("✅ 绑定成功，%s！\n之后工单有新回复会第一时间推送到这里，直接回复消息即可答复。", Escape(u.Username))})
+	c.listUserTickets(bot, m)
+}
+
+func (c *Core) listUserTickets(bot *Client, m *Message) {
+	u := c.userByChatID(m.Chat.ID)
+	if u == nil {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
+			Text: "⚠️ 尚未绑定。请先登录工单网页 → 设置 → 绑定 Telegram。"})
+		return
+	}
+	var tickets []model.Ticket
+	c.G.Where("user_id = ? AND status IN ?", u.ID, []string{"open", "pending"}).
+		Order("last_reply_at DESC").Limit(10).Find(&tickets)
+	if len(tickets) == 0 {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "你目前没有进行中的工单。"})
+		return
+	}
+	var kb [][]InlineKeyboardButton
+	var b strings.Builder
+	b.WriteString("📋 你的进行中工单（点击切换回复目标）：\n")
+	for _, t := range tickets {
+		fmt.Fprintf(&b, "#%d %s · %s\n", t.ID, StatusLabel(t.Status), Escape(Truncate(t.Subject, 40)))
+		kb = append(kb, []InlineKeyboardButton{{
+			Text:         fmt.Sprintf("#%d %s", t.ID, Truncate(t.Subject, 30)),
+			CallbackData: fmt.Sprintf("pick_ticket:%d", t.ID),
+		}})
+	}
+	bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: b.String(), ReplyMarkup: &InlineKeyboardMarkup{InlineKeyboard: kb}})
+}
+
+func (c *Core) onCallback(bot *Client, q *CallbackQuery) {
+	if !strings.HasPrefix(q.Data, "pick_ticket:") {
+		bot.AnswerCallbackQuery(q.ID, "")
+		return
+	}
+	id, err := strconv.ParseUint(strings.TrimPrefix(q.Data, "pick_ticket:"), 10, 64)
+	if err != nil {
+		bot.AnswerCallbackQuery(q.ID, "无效工单")
+		return
+	}
+	var t model.Ticket
+	if err := c.G.First(&t, uint(id)).Error; err != nil {
+		bot.AnswerCallbackQuery(q.ID, "工单不存在")
+		return
+	}
+	// 仅工单所有者可切换
+	var u model.User
+	if err := c.G.Where("tg_chat_id = ?", q.From.ID).First(&u).Error; err != nil || u.ID != t.UserID {
+		bot.AnswerCallbackQuery(q.ID, "无权操作该工单")
+		return
+	}
+	c.G.Save(&model.UserChatState{ChatID: q.Message.Chat.ID, CurrentTicketID: t.ID, UpdatedAt: time.Now()})
+	bot.AnswerCallbackQuery(q.ID, fmt.Sprintf("✅ 已切换，回复将发送到工单 #%d", t.ID))
+}
+
+// ———————— 辅助 ————————
+
+func (c *Core) userByChatID(chatID int64) *model.User {
+	var u model.User
+	if err := c.G.Where("tg_chat_id = ?", chatID).First(&u).Error; err != nil {
+		return nil
+	}
+	return &u
+}
+
+// pickTicket 用户当前回复目标：chat state > 最近活跃的 open/pending 工单
+func (c *Core) pickTicket(u *model.User) uint {
+	var st model.UserChatState
+	if err := c.G.Where("chat_id = ?", u.TGChatID).First(&st).Error; err == nil && st.CurrentTicketID != 0 {
+		var t model.Ticket
+		if err := c.G.Where("id = ? AND user_id = ? AND status != ?", st.CurrentTicketID, u.ID, "closed").First(&t).Error; err == nil {
+			return t.ID
+		}
+	}
+	var t model.Ticket
+	if err := c.G.Where("user_id = ? AND status IN ?", u.ID, []string{"open", "pending"}).
+		Order("last_reply_at DESC").First(&t).Error; err == nil {
+		return t.ID
+	}
+	return 0
+}
+
+func (c *Core) lookupTicketByThread(chatID int64, threadID int) uint {
+	var tt model.TicketTopic
+	if err := c.G.Where("chat_id = ? AND thread_id = ?", chatID, threadID).First(&tt).Error; err != nil {
+		return 0
+	}
+	return tt.TicketID
+}
+
+func (c *Core) reply(bot *Client, m *Message, text string) {
+	if bot == nil {
+		return
+	}
+	bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID, Text: text})
+}
+
+// TicketURL 网页端工单详情链接
+func (c *Core) TicketURL(id uint) string {
+	if c.PublicBaseURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/tickets/%d", c.PublicBaseURL, id)
+}
+
+func senderDisplayName(u *User) string {
+	if u == nil {
+		return "admin"
+	}
+	name := u.DisplayName()
+	if u.Username != "" {
+		return name + " (@" + u.Username + ")"
+	}
+	return name
+}
