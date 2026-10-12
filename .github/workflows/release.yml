@@ -1,0 +1,121 @@
+name: Release & Publish Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Frontend
+        working-directory: web
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: true
+
+      - name: Build Binaries (Multi-Platform)
+        run: |
+          mkdir -p dist
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          [ "$TAG_NAME" = "refs/heads/main" ] && TAG_NAME="v1.0.0"
+
+          PLATFORMS=(
+            "linux/amd64/sub2api-ticket-linux-amd64"
+            "linux/arm64/sub2api-ticket-linux-arm64"
+            "darwin/amd64/sub2api-ticket-darwin-amd64"
+            "darwin/arm64/sub2api-ticket-darwin-arm64"
+            "windows/amd64/sub2api-ticket-windows-amd64.exe"
+            "windows/arm64/sub2api-ticket-windows-arm64.exe"
+          )
+
+          for PLATFORM in "${PLATFORMS[@]}"; do
+            IFS="/" read -r OS ARCH OUTPUT <<< "$PLATFORM"
+            echo "Building for $OS/$ARCH -> dist/$OUTPUT"
+            GOOS=$OS GOARCH=$ARCH CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "dist/$OUTPUT" .
+            if [[ "$OS" == "windows" ]]; then
+              zip -j "dist/sub2api-ticket-${TAG_NAME}-${OS}-${ARCH}.zip" "dist/$OUTPUT"
+            else
+              tar -czvf "dist/sub2api-ticket-${TAG_NAME}-${OS}-${ARCH}.tar.gz" -C dist "$OUTPUT"
+            fi
+          done
+
+          cd dist
+          sha256sum sub2api-ticket-${TAG_NAME}-* > checksums.txt || true
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          generate_release_notes: true
+
+  docker:
+    name: Build & Push Docker Image (GHCR)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
