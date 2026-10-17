@@ -58,14 +58,14 @@ func (c *Client) VerifyToken(token string, expectUserID int64) (*UserInfo, error
 	}
 
 	info := parseUserJSON(body)
-	if expectUserID != 0 && info.Sub2APIID != 0 && info.Sub2APIID != expectUserID {
+	// 身份必须由上游响应确定，绝不能回退到客户端传入的 expectUserID：
+	// 一旦上游响应解析不出 ID（字段改名、返回 200 的 HTML 登录页等），
+	// 任何持有有效 token 的用户都能伪造成任意 sub2api_id（含管理员）。
+	if info.Sub2APIID == 0 {
+		return nil, fmt.Errorf("无法从 sub2api 响应确定用户 ID，拒绝登录")
+	}
+	if expectUserID != 0 && info.Sub2APIID != expectUserID {
 		return nil, fmt.Errorf("token 与 user_id 不匹配")
-	}
-	if info.Sub2APIID == 0 {
-		info.Sub2APIID = expectUserID
-	}
-	if info.Sub2APIID == 0 {
-		return nil, fmt.Errorf("无法确定用户 ID")
 	}
 	return &info, nil
 }
