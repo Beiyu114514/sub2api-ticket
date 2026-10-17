@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -24,6 +25,20 @@ type Core struct {
 	PublicBaseURL string
 	TGProxy       string
 	Pool          *UpdateWorkerPool
+
+	// 群成员权限缓存，避免每条消息都打一次 getChatMember
+	memberMu    sync.Mutex
+	memberCache map[memberKey]memberEntry
+}
+
+type memberKey struct {
+	chatID int64
+	userID int64
+}
+
+type memberEntry struct {
+	admin bool
+	exp   time.Time
 }
 
 func (c *Core) SubmitTask(task func()) bool {
@@ -86,6 +101,12 @@ func (c *Core) HandleUpdate(bot *Client, u Update) {
 var topicIDRe = regexp.MustCompile(`^#(\d+)`)
 
 func (c *Core) onAdminGroup(bot *Client, m *Message) {
+	// 管理员群里的消息只有群主/管理员本人才能被当成客服回复。
+	// Telegram 超级群默认允许成员发言，仅凭 chat_id 相等无法区分身份，
+	// 否则任何被拉进群的人都能冒充管理员回复用户、关闭任意工单。
+	if !c.isGroupAdmin(bot, m.Chat.ID, m.From) {
+		return
+	}
 	// 手动创建的话题名若以 #工单ID 开头，自动建立映射
 	if m.ForumTopicCreated != nil {
 		if match := topicIDRe.FindStringSubmatch(m.ForumTopicCreated.Name); match != nil {
@@ -356,6 +377,41 @@ func (c *Core) onCallback(bot *Client, q *CallbackQuery) {
 }
 
 // ———————— 辅助 ————————
+
+// isGroupAdmin 判断发言者是否是管理员群的群主/管理员。
+// 结果缓存 5 分钟（非管理员/查询失败缓存 30 秒）；查询失败按无权限处理（fail-closed），
+// 宁可暂时不响应，也不能让未知身份的人以客服口吻给用户回话。
+func (c *Core) isGroupAdmin(bot *Client, chatID int64, u *User) bool {
+	if bot == nil || u == nil {
+		return false
+	}
+	key := memberKey{chatID: chatID, userID: u.ID}
+
+	c.memberMu.Lock()
+	if e, ok := c.memberCache[key]; ok && time.Now().Before(e.exp) {
+		c.memberMu.Unlock()
+		return e.admin
+	}
+	c.memberMu.Unlock()
+
+	member, err := bot.GetChatMember(chatID, u.ID)
+	admin := err == nil && member.IsAdmin()
+	if err != nil {
+		log.Printf("[tgbot] getChatMember 失败 chat=%d user=%d: %v", chatID, u.ID, err)
+	}
+
+	ttl := 5 * time.Minute
+	if !admin {
+		ttl = 30 * time.Second
+	}
+	c.memberMu.Lock()
+	if c.memberCache == nil {
+		c.memberCache = map[memberKey]memberEntry{}
+	}
+	c.memberCache[key] = memberEntry{admin: admin, exp: time.Now().Add(ttl)}
+	c.memberMu.Unlock()
+	return admin
+}
 
 func (c *Core) userByChatID(chatID int64) *model.User {
 	var u model.User
