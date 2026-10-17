@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-const apiBase = "https://api.telegram.org"
+// apiBase 抽成变量以便测试指向本地假 Telegram 服务。
+var apiBase = "https://api.telegram.org"
 
 // Client Telegram Bot API 轻量客户端，只封装本项目用到的方法。
 type Client struct {
@@ -55,6 +56,17 @@ func (u User) DisplayName() string {
 		return u.FirstName
 	}
 	return u.Username
+}
+
+// ChatMember getChatMember 返回的群成员信息，仅关心权限状态。
+type ChatMember struct {
+	Status string `json:"status"`
+	User   *User  `json:"user"`
+}
+
+// IsAdmin 是否为群主或管理员。
+func (m *ChatMember) IsAdmin() bool {
+	return m != nil && (m.Status == "creator" || m.Status == "administrator")
 }
 
 type Chat struct {
@@ -141,6 +153,20 @@ func (c *Client) GetMe() (*User, error) {
 	}
 	if !out.OK {
 		return nil, fmt.Errorf("getMe failed")
+	}
+	return &out.Result, nil
+}
+
+// GetChatMember 查询群成员状态，用于确认发言者是否真的具备管理员权限。
+func (c *Client) GetChatMember(chatID, userID int64) (*ChatMember, error) {
+	var out struct {
+		OK     bool       `json:"ok"`
+		Result ChatMember `json:"result"`
+	}
+	if err := c.call("getChatMember", map[string]any{
+		"chat_id": chatID, "user_id": userID,
+	}, &out); err != nil {
+		return nil, err
 	}
 	return &out.Result, nil
 }
@@ -263,15 +289,11 @@ func (c *Client) call(method string, params any, result any) error {
 		return fmt.Errorf("tg %s: %s", method, envelope.Description)
 	}
 	if result != nil {
-		// 二次解析取 result
-		var wrapper struct {
-			Result json.RawMessage `json:"result"`
-		}
-		_ = json.Unmarshal(raw, &wrapper)
-		if len(wrapper.Result) > 0 {
-			if err := json.Unmarshal(wrapper.Result, result); err != nil {
-				return fmt.Errorf("tg %s: result 解析失败: %w", method, err)
-			}
+		// 直接解析完整 envelope（{"ok":true,"result":...}）：调用方传入的都是
+		// 带 OK / Result 字段的结构体。此前只把内层 result 反序列化进这些结构体，
+		// 导致 GetMe 永远失败、SetWebhook 永远报解析错误、CreateForumTopic 永远返回 0。
+		if err := json.Unmarshal(raw, result); err != nil {
+			return fmt.Errorf("tg %s: result 解析失败: %w", method, err)
 		}
 	}
 	return nil
