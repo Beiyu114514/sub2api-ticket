@@ -7,6 +7,8 @@ import { t } from '../i18n'
 
 const router = useRouter()
 const botToken = ref('')
+const botTokenMasked = ref('')
+const hasBotToken = ref(false)
 const adminGroup = ref('')
 const notifyUser = ref(true)
 const notifyAdmin = ref(true)
@@ -19,7 +21,10 @@ const status = ref(null)
 async function load() {
   try {
     const res = await api.get('/api/v1/admin/settings')
-    botToken.value = res.tg_bot_token
+    // 服务端只回显打码后的 Token：输入框留空表示“不修改”
+    botToken.value = ''
+    botTokenMasked.value = res.tg_bot_token_masked || ''
+    hasBotToken.value = !!res.has_bot_token
     adminGroup.value = res.tg_admin_group_id
     notifyUser.value = res.notify_user_enabled
     notifyAdmin.value = res.notify_admin_enabled
@@ -42,14 +47,17 @@ async function save() {
   msg.value = ''
   err.value = ''
   try {
-    await api.put('/api/v1/admin/settings', {
-      tg_bot_token: botToken.value,
+    const payload = {
       tg_admin_group_id: adminGroup.value,
       notify_user_enabled: notifyUser.value,
       notify_admin_enabled: notifyAdmin.value,
-    })
+    }
+    // 只有用户真的输入了新 Token 才提交，避免把打码值写回数据库
+    if (botToken.value.trim() !== '') payload.tg_bot_token = botToken.value.trim()
+    await api.put('/api/v1/admin/settings', payload)
+    botToken.value = ''
     msg.value = t('saved')
-    await refreshStatus()
+    await load()
   } catch (e) {
     err.value = e.message
   } finally {
@@ -115,7 +123,8 @@ onMounted(() => {
       <form v-else @submit.prevent="save" class="space-y-5">
         <div>
           <label class="label">{{ t('botToken') }}</label>
-          <input v-model="botToken" type="text" class="input font-mono text-xs" spellcheck="false" />
+          <input v-model="botToken" type="text" class="input font-mono text-xs" spellcheck="false"
+                 :placeholder="hasBotToken ? botTokenMasked + '（已配置，留空则不修改）' : '123456789:AAxxxxxxxxxxxxxxxxxxxx'" />
           <p class="text-xs text-slate-400 mt-1">{{ t('botTokenHint') }}</p>
         </div>
         <div>
