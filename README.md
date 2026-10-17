@@ -195,7 +195,7 @@ docker run -d \
 |------|------|--------|
 | `LISTEN_ADDR` | 监听地址和端口 | `:8080` |
 | `DB_PATH` | SQLite 数据库路径 | `data/ticket.db` |
-| `COOKIE_SAMESITE` | Cookie SameSite 策略 | `none`（跨域 iframe）|
+| `COOKIE_SAMESITE` | Cookie SameSite 策略 | `lax`（跨站 iframe 需显式设为 `none`）|
 | `SUB2API_VERIFY_PATH` | Token 校验路径 | `/api/v1/auth/me` |
 | `ADMIN_EMAIL` | 本地兜底管理员邮箱 | - |
 | `ADMIN_PASSWORD` | 本地兜底管理员密码 | - |
@@ -341,7 +341,7 @@ ticket.example.com {
 
 ### 环境要求
 
-- Go 1.24+
+- Go 1.27+（`go.mod` 要求 1.27.2，低版本会拒绝编译）
 - Node.js 22+
 - npm 或 pnpm
 
@@ -397,7 +397,7 @@ docker build -t sub2api-ticket:latest .
 
 ### 后端
 
-- **语言**：Go 1.24
+- **语言**：Go 1.27
 - **框架**：Gin Web Framework
 - **数据库**：SQLite (glebarez/sqlite)
 - **ORM**：GORM

@@ -16,13 +16,30 @@ import (
 type AdminHandler struct{ Deps }
 
 func (h *AdminHandler) GetSettings(c *gin.Context) {
+	tok := h.Settings.BotToken()
 	c.JSON(http.StatusOK, gin.H{
-		"tg_bot_token":         h.Settings.BotToken(),
+		// 只回显打码后的 Token，完整值不再离开服务端
+		"tg_bot_token_masked":  maskToken(tok),
+		"has_bot_token":        tok != "",
 		"tg_admin_group_id":    h.Settings.Get(store.KeyAdminGroupID),
 		"notify_user_enabled":  h.Settings.NotifyUserEnabled(),
 		"notify_admin_enabled": h.Settings.NotifyAdminEnabled(),
 		"public_base_url":      h.Cfg.PublicBaseURL,
 	})
+}
+
+// maskToken 打码展示：123456789:AAF…4xY9
+func maskToken(tok string) string {
+	if tok == "" {
+		return ""
+	}
+	if i := strings.Index(tok, ":"); i > 0 && len(tok) > i+6 {
+		return tok[:i+1] + "…" + tok[len(tok)-4:]
+	}
+	if len(tok) > 8 {
+		return tok[:4] + "…" + tok[len(tok)-4:]
+	}
+	return "…"
 }
 
 func (h *AdminHandler) UpdateSettings(c *gin.Context) {
@@ -38,6 +55,7 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 	}
 	oldToken := h.Settings.BotToken()
 	if req.TgBotToken != nil {
+		// 空字符串 = 显式清空；不传该字段 = 保持原值（前端只回传用户新输入的内容）
 		tok := strings.TrimSpace(*req.TgBotToken)
 		if err := h.Settings.Set(store.KeyBotToken, tok); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
@@ -122,7 +140,8 @@ func (h *AdminHandler) SetupWebhook(c *gin.Context) {
 		secret = hex.EncodeToString(b)
 		_ = h.Settings.Set(store.KeyWebhookSecret, secret)
 	}
-	url := h.Cfg.PublicBaseURL + "/api/v1/telegram/webhook/" + secret
+	// secret 只作为 header 传递，不再拼进 URL（避免进访问日志/反代日志）
+	url := h.Cfg.PublicBaseURL + "/api/v1/telegram/webhook"
 	if err := bot.SetWebhook(url, secret); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
