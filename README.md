@@ -451,7 +451,7 @@ docker build -t sub2api-ticket:latest .
 | XSS 防护 | 前端文本节点渲染 + TG HTML 转义 |
 | CSRF | SameSite Cookie + 来源验证 |
 | Telegram 验证 | Webhook 随机路径 + Secret Token 双重校验 |
-| 敏感日志 | Token/密码自动脱敏 |
+| 敏感日志 | 访问日志不记录 query string（避免 `?token=` 泄露）；反代/CDN 日志需自行配置脱敏规则 |
 | 消息可靠性 | Outbox 异步队列 + 指数退避重试 |
 
 ### 安全加固
