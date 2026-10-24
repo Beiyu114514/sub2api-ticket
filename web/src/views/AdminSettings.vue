@@ -12,6 +12,12 @@ const hasBotToken = ref(false)
 const adminGroup = ref('')
 const notifyUser = ref(true)
 const notifyAdmin = ref(true)
+// 存储配置
+const storageMode = ref('local')
+const storageLocalDir = ref('')
+const storageTTL = ref(168)
+const s3 = ref({ endpoint: '', region: '', bucket: '', access_key: '', secret_key: '', use_path_style: false, public_base_url: '' })
+const s3HasSecret = ref(false)
 const loading = ref(true)
 const busy = ref(false)
 const msg = ref('')
@@ -28,6 +34,18 @@ async function load() {
     adminGroup.value = res.tg_admin_group_id
     notifyUser.value = res.notify_user_enabled
     notifyAdmin.value = res.notify_admin_enabled
+    storageMode.value = res.storage_mode || 'local'
+    storageLocalDir.value = res.storage_local_dir || ''
+    storageTTL.value = res.storage_url_ttl_hrs || 168
+    if (res.storage_s3) {
+      const c = res.storage_s3
+      s3.value = {
+        endpoint: c.endpoint || '', region: c.region || '', bucket: c.bucket || '',
+        access_key: c.access_key || '', secret_key: '',
+        use_path_style: !!c.use_path_style, public_base_url: c.public_base_url || '',
+      }
+      s3HasSecret.value = !!c.has_secret
+    }
     await refreshStatus()
   } catch (e) {
     err.value = e.message
@@ -54,6 +72,14 @@ async function save() {
     }
     // 只有用户真的输入了新 Token 才提交，避免把打码值写回数据库
     if (botToken.value.trim() !== '') payload.tg_bot_token = botToken.value.trim()
+    // 存储配置
+    payload.storage_mode = storageMode.value
+    payload.storage_local_dir = storageLocalDir.value
+    payload.storage_url_ttl_hrs = Number(storageTTL.value) || 168
+    const s3c = { ...s3.value }
+    // secret 留空 = 保持原值，不提交该字段
+    if (s3c.secret_key.trim() === '') delete s3c.secret_key
+    payload.storage_s3 = s3c
     await api.put('/api/v1/admin/settings', payload)
     botToken.value = ''
     msg.value = t('saved')
@@ -144,6 +170,68 @@ onMounted(() => {
         <p v-if="err" class="text-sm text-rose-600 dark:text-rose-400">{{ err }}</p>
         <button class="btn-primary" :disabled="busy">{{ t('save') }}</button>
       </form>
+    </div>
+
+    <!-- 存储配置 -->
+    <div class="card p-6">
+      <h2 class="font-medium mb-4">图片存储</h2>
+      <div class="space-y-5">
+        <div>
+          <label class="label">存储模式</label>
+          <div class="flex gap-2">
+            <button type="button" class="btn flex-1 border"
+              :class="storageMode === 'local' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'"
+              @click="storageMode = 'local'">本地磁盘</button>
+            <button type="button" class="btn flex-1 border"
+              :class="storageMode === 's3' ? 'border-blue-500 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'"
+              @click="storageMode = 's3'">S3 兼容</button>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">S3 配置不完整时自动回退到本地存储</p>
+        </div>
+        <div v-if="storageMode === 'local'">
+          <label class="label">本地目录</label>
+          <input v-model="storageLocalDir" class="input font-mono text-xs" placeholder="data/uploads" />
+        </div>
+        <div v-else class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="label">Endpoint</label>
+              <input v-model="s3.endpoint" class="input font-mono text-xs" placeholder="https://s3.amazonaws.com 或 MinIO/R2 地址" />
+            </div>
+            <div>
+              <label class="label">Region</label>
+              <input v-model="s3.region" class="input font-mono text-xs" placeholder="us-east-1" />
+            </div>
+            <div>
+              <label class="label">Bucket</label>
+              <input v-model="s3.bucket" class="input font-mono text-xs" />
+            </div>
+            <div>
+              <label class="label">Access Key</label>
+              <input v-model="s3.access_key" class="input font-mono text-xs" />
+            </div>
+          </div>
+          <div>
+            <label class="label">Secret Key</label>
+            <input v-model="s3.secret_key" type="password" class="input font-mono text-xs"
+              :placeholder="s3HasSecret ? '已配置，留空则不修改' : ''" />
+          </div>
+          <div>
+            <label class="label">公开访问 Base URL（可选）</label>
+            <input v-model="s3.public_base_url" class="input font-mono text-xs"
+              placeholder="https://cdn.example.com/bucket" />
+            <p class="text-xs text-slate-400 mt-1">留空则使用签名 URL 访问</p>
+          </div>
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input v-model="s3.use_path_style" type="checkbox" class="w-4 h-4 accent-blue-600" />
+            使用 Path Style（MinIO /自建 需要）
+          </label>
+        </div>
+        <div>
+          <label class="label">签名 URL 有效期（小时）</label>
+          <input v-model.number="storageTTL" type="number" min="1" max="720" class="input" />
+        </div>
+      </div>
     </div>
 
     <!-- 连接状态与操作 -->
