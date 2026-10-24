@@ -80,32 +80,59 @@ func (s *UploadService) ResignAttachments(list []storage.Attachment) []storage.A
 		return nil
 	}
 	out := make([]storage.Attachment, len(list))
+	keys := make([]string, 0, len(list))
+	keyIdx := map[string][]int{}
 	for i, a := range list {
 		out[i] = a
 		key, err := keyFromURL(a.URL)
 		if err != nil {
 			continue
 		}
-		var rec model.Upload
-		if err := s.G.Where("key = ?", key).First(&rec).Error; err != nil {
-			continue
+		if _, ok := keyIdx[key]; !ok {
+			keys = append(keys, key)
 		}
-		if rec.Storage == "s3" {
+		keyIdx[key] = append(keyIdx[key], i)
+	}
+	if len(keys) == 0 {
+		return out
+	}
+	// 一次批量查所有 key 的存储后端，避免详情接口逐附件点查（N+1）
+	var recs []model.Upload
+	if err := s.G.Select("key", "storage").Where("key IN ?", keys).Find(&recs).Error; err != nil {
+		return out
+	}
+	recByKey := make(map[string]string, len(recs))
+	for _, r := range recs {
+		recByKey[r.Key] = r.Storage
+	}
+	for key, idxs := range keyIdx {
+		storageMode, ok := recByKey[key]
+		if !ok {
+			continue // 记录缺失：保留原 URL（与原实现一致）
+		}
+		var url string
+		if storageMode == "s3" {
 			if b := s.s3Backend(); b != nil {
 				if b.PublicBase != "" {
-					out[i].URL = strings.TrimSuffix(b.PublicBase, "/") + "/" + key
+					url = strings.TrimSuffix(b.PublicBase, "/") + "/" + key
 				} else {
-					out[i].URL = b.Presign(key)
+					url = b.Presign(key)
 				}
 			}
+		} else {
+			url = s.localBackend().SignedURL(key, time.Now())
+		}
+		if url == "" {
 			continue
 		}
-		out[i].URL = s.localBackend().SignedURL(key, time.Now())
+		for _, i := range idxs {
+			out[i].URL = url
+		}
 	}
 	return out
 }
 
-// 简单内存限速：每用户每分钟最多 10 次
+// 简单内存限速：每用户每分钟最多 10 次；顺带清理过期桶，避免 map 随用户数无限增长
 var uploadRate = struct {
 	sync.Mutex
 	m map[uint][]time.Time
@@ -115,6 +142,13 @@ func allowUpload(userID uint) bool {
 	uploadRate.Lock()
 	defer uploadRate.Unlock()
 	now := time.Now()
+	if len(uploadRate.m) > 1024 {
+		for k, list := range uploadRate.m {
+			if len(list) == 0 || now.Sub(list[len(list)-1]) >= time.Minute {
+				delete(uploadRate.m, k)
+			}
+		}
+	}
 	list := uploadRate.m[userID]
 	keep := list[:0]
 	for _, t := range list {
@@ -145,9 +179,39 @@ func extByMime(mime string) string {
 	return "bin"
 }
 
+// errUserVisible 精确匹配的校验类错误文案
+var errUserVisible = map[string]bool{
+	"上传过于频繁，请稍后再试": true,
+	"文件过大（上限 10MB）":   true,
+}
+
+// uploadSkipRateSentinel TG 管理员群占位用户的哨兵 ID（真实用户 ID 从 1 开始），
+// SaveImage 对该 ID 跳过限速：群消息已过 isGroupAdmin 鉴权
+const uploadSkipRateSentinel uint = 0
+
+// isUserVisibleUploadErr 上传链路中可直接展示给用户的校验类错误；
+// 其余（存储/数据库故障）属于服务端问题，不应把内部细节透给前端。
+func isUserVisibleUploadErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	switch {
+	case errUserVisible[msg]:
+		return true
+	case strings.HasPrefix(msg, "不支持的图片格式"),
+		strings.HasPrefix(msg, "文件过大"),
+		strings.HasPrefix(msg, "图片"),
+		strings.HasPrefix(msg, "webp "):
+		return true
+	}
+	return false
+}
+
 // SaveImage 处理一次上传：原始名仅用于展示，key 服务端随机生成
 func (s *UploadService) SaveImage(ctx context.Context, u *model.User, data []byte, origName string) (*storage.Attachment, error) {
-	if !allowUpload(u.ID) {
+	// uploadSkipRateSentinel：TG 管理员群占位用户，已在群权限层鉴权，跳过限速
+	if u.ID != uploadSkipRateSentinel && !allowUpload(u.ID) {
 		return nil, fmt.Errorf("上传过于频繁，请稍后再试")
 	}
 	out, mime, w, h, err := storage.ProcessImage(data)

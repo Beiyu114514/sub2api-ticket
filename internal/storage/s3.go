@@ -27,6 +27,10 @@ type S3 struct {
 	presignTTL time.Duration
 }
 
+// s3HTTP S3 专用 HTTP 客户端：DefaultClient 无超时，端点挂起时会卡死
+// 顺序消费的 notify worker，必须带超时。
+var s3HTTP = &http.Client{Timeout: 60 * time.Second}
+
 func (s *S3) Name() string { return "s3" }
 
 func (s *S3) ttl() time.Duration {
@@ -38,15 +42,6 @@ func (s *S3) ttl() time.Duration {
 		return s.presignTTL
 	}
 	return 7 * 24 * time.Hour
-}
-
-func (s *S3) objectURL(key string) string {
-	if s.PathStyle {
-		return strings.TrimSuffix(s.Endpoint, "/") + "/" + s.Bucket + "/" + key
-	}
-	// virtual-hosted style：bucket.endpoint
-	ep, _ := url.Parse(s.Endpoint)
-	return fmt.Sprintf("%s://%s.%s/%s", ep.Scheme, s.Bucket, ep.Host, key)
 }
 
 // hmacSHA256 小工具
@@ -204,7 +199,7 @@ func (s *S3) Save(ctx context.Context, o Object) (string, error) {
 	if o.Size > 0 {
 		req.ContentLength = o.Size
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s3HTTP.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +221,7 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s3HTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +271,7 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 	req.Header.Set("Authorization", fmt.Sprintf(
 		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
 		s.AccessKey, scope, signedHeaders, sig))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s3HTTP.Do(req)
 	if err != nil {
 		return err
 	}

@@ -108,6 +108,27 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
+	// 先做完全部参数校验，再统一写入：避免部分字段已落库、后续字段校验失败
+	// 造成"请求失败但设置已被改了一半"的中间态
+	if req.TgAdminGroupID != nil {
+		if v := strings.TrimSpace(*req.TgAdminGroupID); v != "" {
+			if _, err := strconv.ParseInt(v, 10, 64); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "群 ID 必须是数字（超级群通常为 -100 开头）"})
+				return
+			}
+		}
+	}
+	if req.StorageMode != nil {
+		m := strings.TrimSpace(*req.StorageMode)
+		if m != "local" && m != "s3" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "storage_mode 只支持 local/s3"})
+			return
+		}
+	}
+	if req.AssistantTemperature != nil && (*req.AssistantTemperature < 0 || *req.AssistantTemperature > 2) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "assistant_temperature 取值范围 0-2"})
+		return
+	}
 	oldToken := h.Settings.BotToken()
 	if req.TgBotToken != nil {
 		// 空字符串 = 显式清空；不传该字段 = 保持原值（前端只回传用户新输入的内容）
@@ -122,12 +143,6 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.TgAdminGroupID != nil {
 		v := strings.TrimSpace(*req.TgAdminGroupID)
-		if v != "" {
-			if _, err := strconv.ParseInt(v, 10, 64); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "群 ID 必须是数字（超级群通常为 -100 开头）"})
-				return
-			}
-		}
 		_ = h.Settings.Set(store.KeyAdminGroupID, v)
 	}
 	if req.NotifyUserEnabled != nil {
@@ -137,12 +152,7 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 		_ = h.Settings.Set(store.KeyNotifyAdmin, boolStr(*req.NotifyAdminEnabled))
 	}
 	if req.StorageMode != nil {
-		m := strings.TrimSpace(*req.StorageMode)
-		if m != "local" && m != "s3" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "storage_mode 只支持 local/s3"})
-			return
-		}
-		_ = h.Settings.Set(store.KeyStorageMode, m)
+		_ = h.Settings.Set(store.KeyStorageMode, strings.TrimSpace(*req.StorageMode))
 	}
 	if req.StorageLocalDir != nil {
 		if v := strings.TrimSpace(*req.StorageLocalDir); v != "" {
@@ -187,7 +197,7 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 	if req.AssistantModel != nil {
 		_ = h.Settings.Set(store.KeyAssistantModel, strings.TrimSpace(*req.AssistantModel))
 	}
-	if req.AssistantTemperature != nil && *req.AssistantTemperature >= 0 && *req.AssistantTemperature <= 2 {
+	if req.AssistantTemperature != nil {
 		_ = h.Settings.Set(store.KeyAssistantTemperature, strconv.FormatFloat(*req.AssistantTemperature, 'f', -1, 64))
 	}
 	if req.AssistantSilentMin != nil && *req.AssistantSilentMin > 0 {

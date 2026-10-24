@@ -10,7 +10,6 @@ import (
 	"io"
 
 	"golang.org/x/image/draw"
-	_ "image/gif"
 	xwebp "golang.org/x/image/webp"
 )
 

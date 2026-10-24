@@ -44,10 +44,13 @@ func (a *Agent) tick() {
 	// 只处理助手开启（或重新开启）之后收到的消息，不对历史积压工单批量回复。
 	var tickets []model.Ticket
 	silentBefore := time.Now().Add(-time.Duration(a.S.AssistantSilentMinutes()) * time.Minute)
-	enabledAt := time.Unix(a.S.AssistantEnabledAt(), 0)
+	enabledAt := a.S.AssistantEnabledAt()
+	if enabledAt <= 0 {
+		return // 缺开启时刻（直接改库/旧库升级）：无法界定生效范围，宁可不回复也不扫历史积压
+	}
 	if err := a.G.Where(
 		"status IN ? AND last_reply_by = ? AND last_reply_at <= ? AND last_reply_at >= ? AND assistant_replies < ?",
-		[]string{"open", "pending"}, "user", silentBefore, enabledAt, a.S.AssistantMaxReplies(),
+		[]string{"open", "pending"}, "user", silentBefore, time.Unix(enabledAt, 0), a.S.AssistantMaxReplies(),
 	).Limit(5).Find(&tickets).Error; err != nil {
 		return
 	}

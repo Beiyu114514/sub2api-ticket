@@ -609,8 +609,10 @@ func (c *Core) collectPhotos(bot *Client, m *Message) []storage.Attachment {
 			return nil // 未绑定用户在 onPrivate 前置分支已提示
 		}
 	} else {
-		// 管理员群：无对应用户，构造占位用户落审计（SaveImage 内部有全局限速兜底）
-		u = &model.User{Username: senderDisplayName(m.From)}
+	// 管理员群：无对应用户，构造占位用户落审计。
+	// 占位用户 ID 为零值 0（哨兵），SaveImage 对其跳过限速——群消息已经过
+	// isGroupAdmin 鉴权，若与普通用户共用限速桶，全体管理员挤同一桶会触顶丢图
+	u = &model.User{Username: senderDisplayName(m.From)}
 	}
 	var atts []storage.Attachment
 	var lastErr error

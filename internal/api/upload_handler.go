@@ -40,7 +40,12 @@ func (h *UploadHandler) Upload(c *gin.Context) {
 	svc := &UploadService{h.Deps}
 	att, err := svc.SaveImage(context.Background(), u, data, fh.Filename)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if isUserVisibleUploadErr(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			// 存储/数据库故障：不把内部细节透给前端
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "上传失败，请稍后再试"})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"attachment": att})
