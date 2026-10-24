@@ -43,6 +43,7 @@ func Open(path string) (*gorm.DB, error) {
 		&model.Session{},
 		&model.Notification{},
 		&model.BindCode{},
+		&model.Upload{},
 		&model.Setting{},
 	); err != nil {
 		return nil, err

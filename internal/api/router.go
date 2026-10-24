@@ -1,9 +1,15 @@
 package api
 
 import (
+	"io"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"sub2api-ticket/internal/storage"
 	"gorm.io/gorm"
 
 	"sub2api-ticket/internal/auth"
@@ -65,6 +71,10 @@ func NewRouter(d Deps) *gin.Engine {
 		authed.DELETE("/telegram/bind", bh.Unbind)
 		authed.GET("/telegram/bind-status", bh.Status)
 
+		// 图片上传
+		uh := &UploadHandler{Deps: d}
+		authed.POST("/uploads", uh.Upload)
+
 		// 管理端
 		admin := authed.Group("", d.Auth.RequireAdmin())
 		{
@@ -86,7 +96,54 @@ func NewRouter(d Deps) *gin.Engine {
 	// 访问日志已由 accessLog 屏蔽该前缀
 	apiV1.POST("/telegram/webhook/:secret", wh.HandleLegacy)
 
+	// 本地存储附件服务：/uploads/<key>?e=<expire>&s=<sig>，HMAC 签名校验
+	registerUploads(r, d)
+
 	return r
+}
+
+// registerUploads 提供 /uploads/<key> 静态访问（local 模式）。
+// 每次请求按当前设置构造 Local 校验器，签名密钥来自 Setting。
+func registerUploads(r *gin.Engine, d Deps) {
+	r.GET("/uploads/*key", func(c *gin.Context) {
+		key := strings.TrimPrefix(c.Param("key"), "/")
+		expire, _ := strconv.ParseInt(c.Query("e"), 10, 64)
+		sig := c.Query("s")
+		l := &storage.Local{
+			Root:    d.Settings.StorageLocalDir(),
+			SignKey: d.Settings.StorageSignKey(),
+			URLTTL:  time.Duration(d.Settings.StorageURLTTLHours()) * time.Hour,
+		}
+		if err := l.Verify(key, expire, sig, time.Now()); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		rc, err := l.Open(c.Request.Context(), key)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "附件不存在"})
+			return
+		}
+		defer rc.Close()
+		mimeType := mimeByExt(key)
+		c.Header("Cache-Control", "private, max-age=3600")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Data(http.StatusOK, mimeType, nil)
+		io.Copy(c.Writer, rc)
+	})
+}
+
+func mimeByExt(key string) string {
+	switch {
+	case strings.HasSuffix(key, ".jpg"), strings.HasSuffix(key, ".jpeg"):
+		return "image/jpeg"
+	case strings.HasSuffix(key, ".png"):
+		return "image/png"
+	case strings.HasSuffix(key, ".gif"):
+		return "image/gif"
+	case strings.HasSuffix(key, ".webp"):
+		return "image/webp"
+	}
+	return "application/octet-stream"
 }
 
 // accessLog 记录访问日志，并做两处脱敏：

@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"encoding/hex"
 	"net/http"
 	"strconv"
@@ -25,7 +26,32 @@ func (h *AdminHandler) GetSettings(c *gin.Context) {
 		"notify_user_enabled":  h.Settings.NotifyUserEnabled(),
 		"notify_admin_enabled": h.Settings.NotifyAdminEnabled(),
 		"public_base_url":      h.Cfg.PublicBaseURL,
+		"storage_mode":         h.Settings.StorageMode(),
+		"storage_local_dir":    h.Settings.StorageLocalDir(),
+		"storage_url_ttl_hrs":  h.Settings.StorageURLTTLHours(),
+		"storage_s3":           maskS3Config(h.Settings.StorageS3JSON()),
 	})
+}
+
+// maskS3Config S3 配置回显：secret 打码
+func maskS3Config(jsonStr string) gin.H {
+	out := gin.H{"endpoint": "", "region": "", "bucket": "", "access_key": "",
+		"use_path_style": false, "public_base_url": "", "has_secret": false}
+	if jsonStr == "" {
+		return out
+	}
+	var cfg S3Config
+	if err := json.Unmarshal([]byte(jsonStr), &cfg); err != nil {
+		return out
+	}
+	out["endpoint"] = cfg.Endpoint
+	out["region"] = cfg.Region
+	out["bucket"] = cfg.Bucket
+	out["access_key"] = cfg.AccessKey
+	out["use_path_style"] = cfg.PathStyle
+	out["public_base_url"] = cfg.PublicBase
+	out["has_secret"] = cfg.SecretKey != ""
+	return out
 }
 
 // maskToken 打码展示：123456789:AAF…4xY9
@@ -48,6 +74,18 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 		TgAdminGroupID     *string `json:"tg_admin_group_id"`
 		NotifyUserEnabled  *bool   `json:"notify_user_enabled"`
 		NotifyAdminEnabled *bool   `json:"notify_admin_enabled"`
+		StorageMode        *string `json:"storage_mode"`
+		StorageLocalDir    *string `json:"storage_local_dir"`
+		StorageURLTTLHrs   *int    `json:"storage_url_ttl_hrs"`
+		StorageS3          *struct {
+			Endpoint   string `json:"endpoint"`
+			Region     string `json:"region"`
+			Bucket     string `json:"bucket"`
+			AccessKey  string `json:"access_key"`
+			SecretKey  string `json:"secret_key"`
+			PathStyle  bool   `json:"use_path_style"`
+			PublicBase string `json:"public_base_url"`
+		} `json:"storage_s3"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
@@ -80,6 +118,39 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.NotifyAdminEnabled != nil {
 		_ = h.Settings.Set(store.KeyNotifyAdmin, boolStr(*req.NotifyAdminEnabled))
+	}
+	if req.StorageMode != nil {
+		m := strings.TrimSpace(*req.StorageMode)
+		if m != "local" && m != "s3" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "storage_mode 只支持 local/s3"})
+			return
+		}
+		_ = h.Settings.Set(store.KeyStorageMode, m)
+	}
+	if req.StorageLocalDir != nil {
+		if v := strings.TrimSpace(*req.StorageLocalDir); v != "" {
+			_ = h.Settings.Set(store.KeyStorageLocalDir, v)
+		}
+	}
+	if req.StorageURLTTLHrs != nil && *req.StorageURLTTLHrs > 0 {
+		_ = h.Settings.Set(store.KeyStorageURLTTLHrs, strconv.Itoa(*req.StorageURLTTLHrs))
+	}
+	if req.StorageS3 != nil {
+		// secret 留空 = 保持原值（前端只回显 has_secret）
+		var cfg S3Config
+		_ = json.Unmarshal([]byte(h.Settings.StorageS3JSON()), &cfg)
+		in := req.StorageS3
+		cfg.Endpoint = strings.TrimRight(in.Endpoint, "/")
+		cfg.Region = in.Region
+		cfg.Bucket = in.Bucket
+		cfg.AccessKey = in.AccessKey
+		if in.SecretKey != "" {
+			cfg.SecretKey = in.SecretKey
+		}
+		cfg.PathStyle = in.PathStyle
+		cfg.PublicBase = strings.TrimRight(in.PublicBase, "/")
+		b, _ := json.Marshal(cfg)
+		_ = h.Settings.Set(store.KeyStorageS3JSON, string(b))
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

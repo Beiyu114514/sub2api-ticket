@@ -65,7 +65,7 @@ func TestAppendMessageNoLostUpdate(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, _, err := st.AppendMessage(ticket.ID, u, "user", u.Username,
-				fmt.Sprintf("并发消息 %d", i), "web", false)
+				fmt.Sprintf("并发消息 %d", i), "web", false, nil)
 			if err != nil {
 				errCh <- err
 			}
@@ -109,7 +109,7 @@ func TestAppendMessageAdminConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			st.AppendMessage(ticket.ID, nil, "admin", "admin", fmt.Sprintf("回复 %d", i), "telegram", true)
+			st.AppendMessage(ticket.ID, nil, "admin", "admin", fmt.Sprintf("回复 %d", i), "telegram", true, nil)
 		}(i)
 	}
 	wg.Wait()
@@ -136,10 +136,10 @@ func TestAppendMessageClosedReopen(t *testing.T) {
 	if _, err := st.ChangeStatus(ticket, "admin", "admin", "closed"); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if _, _, err := st.AppendMessage(ticket.ID, u, "user", u.Username, "关闭后回复", "web", false); err != ErrTicketClosed {
+	if _, _, err := st.AppendMessage(ticket.ID, u, "user", u.Username, "关闭后回复", "web", false, nil); err != ErrTicketClosed {
 		t.Fatalf("closed ticket append err = %v, want ErrTicketClosed", err)
 	}
-	updated, _, err := st.AppendMessage(ticket.ID, nil, "admin", "admin", "管理员回复重开", "telegram", true)
+	updated, _, err := st.AppendMessage(ticket.ID, nil, "admin", "admin", "管理员回复重开", "telegram", true, nil)
 	if err != nil {
 		t.Fatalf("admin append: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestAppendMessageReturnsFreshState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create ticket: %v", err)
 	}
-	updated, msg, err := st.AppendMessage(ticket.ID, u, "user", u.Username, "第二条", "web", false)
+	updated, msg, err := st.AppendMessage(ticket.ID, u, "user", u.Username, "第二条", "web", false, nil)
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}

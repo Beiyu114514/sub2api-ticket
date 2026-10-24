@@ -48,11 +48,25 @@ type Ticket struct {
 type TicketMessage struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
 	TicketID   uint      `gorm:"index" json:"ticket_id"`
-	SenderRole string    `json:"sender_role"` // user / admin / system
+	SenderRole string    `json:"sender_role"` // user / admin / system / assistant
 	SenderName string    `json:"sender_name"`
 	Content    string    `json:"content"`
-	Via        string    `json:"via"` // web / telegram
+	// Attachments 附件 JSON 数组，元素结构见 storage.Attachment；空串=无附件
+	Attachments string    `json:"attachments"`
+	Via        string    `json:"via"` // web / telegram / assistant
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Upload 上传审计记录：谁传的、存在哪种存储、对象 key，供归属校验与孤儿清理
+type Upload struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index" json:"user_id"`
+	TicketID  uint      `gorm:"index;default:0" json:"ticket_id"` // 0 = 尚未挂到消息
+	Storage   string    `json:"storage"`                         // local / s3
+	Key       string    `gorm:"uniqueIndex" json:"key"`
+	Mime      string    `json:"mime"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // TicketTopic 管理员群话题映射：每个工单一个 forum topic

@@ -3,12 +3,14 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { t } from '../i18n'
+import ImageUploader from '../components/ImageUploader.vue'
 
 const router = useRouter()
 const subject = ref('')
 const category = ref('')
 const priority = ref('normal')
 const content = ref('')
+const pendingAtts = ref([])
 const busy = ref(false)
 const err = ref('')
 
@@ -28,6 +30,7 @@ async function submit() {
       category: category.value,
       priority: priority.value,
       content: content.value,
+      attachments: pendingAtts.value.map(a => a.url),
     })
     router.push(`/tickets/${res.ticket.id}`)
   } catch (e) {
@@ -71,6 +74,9 @@ async function submit() {
         <textarea v-model="content" required rows="7" :placeholder="t('contentPh')"
           class="input resize-y font-normal"></textarea>
         <p class="text-xs text-slate-400 mt-1 text-right">{{ t('charLimit', { n: content.length }) }}</p>
+        <div class="mt-2">
+          <ImageUploader v-model="pendingAtts" :max="5" :disabled="busy" />
+        </div>
       </div>
       <p v-if="err" class="text-sm text-rose-600 dark:text-rose-400">{{ err }}</p>
       <div class="flex items-center justify-between">

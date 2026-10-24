@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { api } from '../api'
 import { store } from '../store'
 import { t } from '../i18n'
+import ImageUploader from '../components/ImageUploader.vue'
 
 const route = useRoute()
 const ticket = ref(null)
@@ -11,9 +12,11 @@ const messages = ref([])
 const loading = ref(true)
 const err = ref('')
 const reply = ref('')
+const pendingAtts = ref([])
 const sending = ref(false)
 const actionBusy = ref(false)
 const streamEl = ref(null)
+const lightbox = ref(null) // 当前放大的附件 URL
 let timer = null
 
 const canReply = computed(() => ticket.value && ticket.value.status !== 'closed')
@@ -40,17 +43,25 @@ function scrollBottom() {
 
 async function send() {
   const text = reply.value.trim()
-  if (!text || sending.value) return
+  const atts = pendingAtts.value.map(a => a.url)
+  if ((!text && !atts.length) || sending.value) return
   sending.value = true
   try {
-    await api.post(`/api/v1/tickets/${route.params.id}/messages`, { content: text })
+    await api.post(`/api/v1/tickets/${route.params.id}/messages`, {
+      content: text, attachments: atts,
+    })
     reply.value = ''
+    pendingAtts.value = []
     await load(true)
   } catch (e) {
     alert(e.message)
   } finally {
     sending.value = false
   }
+}
+
+function msgAtts(m) {
+  try { return JSON.parse(m.attachments || '[]') } catch { return [] }
 }
 
 async function setStatus(status) {
@@ -187,6 +198,13 @@ onUnmounted(() => {
                 <span>{{ fmtTime(m.created_at) }}</span>
               </div>
               <p class="whitespace-pre-wrap break-words text-sm leading-relaxed">{{ m.content }}</p>
+              <div v-if="msgAtts(m).length" class="grid gap-1 mt-1"
+                :class="msgAtts(m).length > 1 ? 'grid-cols-3' : 'grid-cols-1'">
+                <img v-for="a in msgAtts(m)" :key="a.url" :src="a.url"
+                  class="rounded-lg cursor-zoom-in object-cover w-full max-h-48"
+                  :class="msgAtts(m).length > 1 ? 'h-24' : 'max-h-72'"
+                  alt="" @click="lightbox = a.url" />
+              </div>
             </div>
           </div>
         </div>
@@ -199,9 +217,12 @@ onUnmounted(() => {
             v-model="reply" rows="3" :placeholder="t('replyPh')"
             class="input resize-y" @keydown.ctrl.enter="send" @keydown.meta.enter="send"
           ></textarea>
+          <div class="mt-2">
+            <ImageUploader v-model="pendingAtts" :max="5" :disabled="sending" />
+          </div>
           <div class="flex items-center justify-between mt-3">
             <span class="text-xs text-slate-400 hidden sm:inline">Ctrl/⌘ + Enter</span>
-            <button class="btn-primary" :disabled="sending || !reply.trim()" @click="send">
+            <button class="btn-primary" :disabled="sending || (!reply.trim() && !pendingAtts.length)" @click="send">
               {{ sending ? t('sending') : t('send') }}
             </button>
           </div>
@@ -216,5 +237,12 @@ onUnmounted(() => {
         </template>
       </div>
     </template>
+
+    <!-- 图片灯箱 -->
+    <div v-if="lightbox" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6"
+      @click="lightbox = null">
+      <img :src="lightbox" class="max-w-full max-h-full rounded-lg" alt="" @click.stop />
+      <button class="absolute top-4 right-6 text-white/80 text-3xl leading-none" @click="lightbox = null">×</button>
+    </div>
   </div>
 </template>

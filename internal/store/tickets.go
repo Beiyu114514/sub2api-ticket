@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"sub2api-ticket/internal/model"
+	"sub2api-ticket/internal/storage"
 )
 
 var (
@@ -74,7 +75,8 @@ func (st *TicketStore) CreateTicket(u *model.User, subject, category, priority, 
 }
 
 // AppendMessage 追加回复并做状态流转/未读/通知。sender 为 nil 时视为系统消息。
-func (st *TicketStore) AppendMessage(ticketID uint, sender *model.User, senderRole, senderName, content, via string, closedOK bool) (*model.Ticket, *model.TicketMessage, error) {
+// atts 为已校验归属的附件（可为 nil）。
+func (st *TicketStore) AppendMessage(ticketID uint, sender *model.User, senderRole, senderName, content, via string, closedOK bool, atts []storage.Attachment) (*model.Ticket, *model.TicketMessage, error) {
 	var t model.Ticket
 	if err := st.G.First(&t, ticketID).Error; err != nil {
 		return nil, nil, ErrNotFound
@@ -86,11 +88,12 @@ func (st *TicketStore) AppendMessage(ticketID uint, sender *model.User, senderRo
 		senderRole = "user"
 	}
 	msg := &model.TicketMessage{
-		TicketID:   t.ID,
-		SenderRole: senderRole,
-		SenderName: senderName,
-		Content:    content,
-		Via:        via,
+		TicketID:    t.ID,
+		SenderRole:  senderRole,
+		SenderName:  senderName,
+		Content:     content,
+		Attachments: storage.EncodeAttachments(atts),
+		Via:         via,
 	}
 	now := time.Now()
 	updates := map[string]any{
@@ -208,6 +211,12 @@ func (st *TicketStore) enqueueAdminNotify(kind string, ticketID, messageID uint)
 		Status:        "pending",
 		NextAttemptAt: time.Now(),
 	})
+}
+
+// SetMessageAttachments 为已创建的消息补写附件（建单流程：先建单再挂附件）
+func (st *TicketStore) SetMessageAttachments(messageID uint, atts []storage.Attachment) error {
+	return st.G.Model(&model.TicketMessage{ID: messageID}).
+		Update("attachments", storage.EncodeAttachments(atts)).Error
 }
 
 func mustJSON(v any) string {

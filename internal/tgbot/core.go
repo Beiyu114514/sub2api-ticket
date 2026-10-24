@@ -132,7 +132,7 @@ func (c *Core) onAdminGroup(bot *Client, m *Message) {
 		return // 非工单话题
 	}
 	name := senderDisplayName(m.From)
-	_, _, err := c.T.AppendMessage(tt.TicketID, nil, "admin", name, text, "telegram", true)
+	_, _, err := c.T.AppendMessage(tt.TicketID, nil, "admin", name, text, "telegram", true, nil)
 	if err != nil {
 		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID,
 			Text: "⚠️ 同步失败：" + Escape(err.Error())})
@@ -289,7 +289,7 @@ func (c *Core) onPrivate(bot *Client, m *Message) {
 			Text: "你当前没有进行中的工单。请到网页端创建工单后，再来这里回复。"})
 		return
 	}
-	_, _, err := c.T.AppendMessage(ticketID, u, "user", u.Username, text, "telegram", false)
+	_, _, err := c.T.AppendMessage(ticketID, u, "user", u.Username, text, "telegram", false, nil)
 	if err == store.ErrTicketClosed {
 		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "该工单已关闭，请到网页端重新开启后再回复。"})
 		return

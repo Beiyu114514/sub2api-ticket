@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"sub2api-ticket/internal/model"
+	"sub2api-ticket/internal/storage"
 	"sub2api-ticket/internal/store"
 )
 
@@ -84,10 +85,11 @@ func (h *TicketHandler) List(c *gin.Context) {
 func (h *TicketHandler) Create(c *gin.Context) {
 	u := c.MustGet("user").(*model.User)
 	var req struct {
-		Subject  string `json:"subject" binding:"required"`
-		Category string `json:"category"`
-		Priority string `json:"priority"`
-		Content  string `json:"content" binding:"required"`
+		Subject     string   `json:"subject" binding:"required"`
+		Category    string   `json:"category"`
+		Priority    string   `json:"priority"`
+		Content     string   `json:"content" binding:"required"`
+		Attachments []string `json:"attachments"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标题和内容必填"})
@@ -123,6 +125,15 @@ func (h *TicketHandler) Create(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
+	}
+	if len(req.Attachments) > 0 {
+		atts := resolveAttachments(UploadHandler{h.Deps}, c, u, req.Attachments)
+		if atts == nil {
+			return
+		}
+		if err := h.Tickets.SetMessageAttachments(msg.ID, atts); err == nil {
+			(&UploadService{h.Deps}).RebindTicketToUploads(u.ID, t.ID, atts)
+		}
 	}
 	msg.Content = "" // 首条消息在详情里看
 	c.JSON(http.StatusOK, gin.H{"ticket": t, "first_message": msg})
@@ -171,10 +182,12 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Content string `json:"content" binding:"required"`
+		Content     string   `json:"content"`
+		Attachments []string `json:"attachments"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "内容不能为空"})
+	if err := c.ShouldBindJSON(&req); err != nil ||
+		(strings.TrimSpace(req.Content) == "" && len(req.Attachments) == 0) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "内容和附件不能同时为空"})
 		return
 	}
 	if len(req.Content) > 10000 {
@@ -185,7 +198,14 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 	if u.IsAdmin() {
 		role = "admin"
 	}
-	_, msg, err := h.Tickets.AppendMessage(t.ID, u, role, u.Username, strings.TrimSpace(req.Content), "web", false)
+	var atts []storage.Attachment
+	if len(req.Attachments) > 0 {
+		atts = resolveAttachments(UploadHandler{h.Deps}, c, u, req.Attachments)
+		if atts == nil {
+			return
+		}
+	}
+	_, msg, err := h.Tickets.AppendMessage(t.ID, u, role, u.Username, strings.TrimSpace(req.Content), "web", false, atts)
 	if err == store.ErrTicketClosed {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -194,6 +214,7 @@ func (h *TicketHandler) Reply(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "发送失败"})
 		return
 	}
+	(&UploadService{h.Deps}).RebindTicketToUploads(u.ID, t.ID, atts)
 	c.JSON(http.StatusOK, gin.H{"message": msg})
 }
 
