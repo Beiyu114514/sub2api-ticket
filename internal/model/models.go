@@ -5,7 +5,10 @@ import "time"
 // User sub2api 用户镜像。role 与 sub2api 保持一致：admin / user
 type User struct {
 	ID        uint   `gorm:"primaryKey" json:"id"`
-	Sub2APIID int64  `gorm:"uniqueIndex" json:"sub2api_id"`
+	// 列名显式固定为 sub2api_id：GORM 对 Sub2APIID 的默认蛇形命名
+	// 随版本变化（曾生成 sub_api_id / sub2_api_id），不锁定会导致跨版本升级后
+	// AutoMigrate 建出与代码查询不一致的列，SSO 登录 500（见 issue #2）。
+	Sub2APIID int64  `gorm:"column:sub2api_id;uniqueIndex" json:"sub2api_id"`
 	Username  string `json:"username"`
 	Email     string `json:"email"`
 	Role      string `json:"role"`
