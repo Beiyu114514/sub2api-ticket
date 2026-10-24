@@ -35,7 +35,7 @@ func (d Deps) Bot() *tgbot.Client {
 
 func NewRouter(d Deps) *gin.Engine {
 	r := gin.New()
-	r.Use(skipWebhookAccessLog(), gin.Recovery())
+	r.Use(accessLog(), gin.Recovery())
 
 	apiV1 := r.Group("/api/v1")
 
@@ -83,16 +83,19 @@ func NewRouter(d Deps) *gin.Engine {
 	// 新地址：secret 只走 X-Telegram-Bot-Api-Secret-Token 头，不进 URL、不进访问日志
 	apiV1.POST("/telegram/webhook", wh.Handle)
 	// 兼容旧地址：secret 仍在路径中（历史注册的 webhook 继续可用），
-	// 访问日志已由 skipWebhookAccessLog 屏蔽该前缀
+	// 访问日志已由 accessLog 屏蔽该前缀
 	apiV1.POST("/telegram/webhook/:secret", wh.HandleLegacy)
 
 	return r
 }
 
-// skipWebhookAccessLog 跳过 webhook 路径的访问日志：
-// 旧版 webhook 把 secret 放在 URL 路径里，一旦写进日志，任何能读日志的人都能伪造 TG 更新。
-func skipWebhookAccessLog() gin.HandlerFunc {
-	logger := gin.Logger()
+// accessLog 记录访问日志，并做两处脱敏：
+//  1. 跳过 Telegram webhook 路径：旧版 webhook 把 secret 放在 URL 路径里，
+//     一旦写进日志，任何能读日志的人都能伪造 TG 更新；
+//  2. 不记录 query string：SPA 入口会把 SSO JWT 放在 ?token= 中，
+//     该 token 可被重放，不能明文落盘或进入日志系统。
+func accessLog() gin.HandlerFunc {
+	logger := gin.LoggerWithConfig(gin.LoggerConfig{SkipQueryString: true})
 	return func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/telegram/webhook") {
 			c.Next()
