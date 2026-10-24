@@ -90,6 +90,8 @@ type Message struct {
 	ForumTopicClosed   *map[string]any    `json:"forum_topic_closed"`
 	ForumTopicReopened *map[string]any    `json:"forum_topic_reopened"`
 	ReplyToMessage     *Message           `json:"reply_to_message"`
+	// PhotosMerged 相册聚合标记：Photo 里每项已是各图挑出的最大尺寸，直接逐项下载
+	PhotosMerged bool `json:"-"`
 }
 
 type PhotoSize struct {

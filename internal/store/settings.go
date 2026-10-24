@@ -85,6 +85,9 @@ const (
 	KeyAssistantSilentMin    = "assistant_silent_minutes"
 	KeyAssistantMaxReplies   = "assistant_max_replies_per_ticket"
 	KeyAssistantSystemPrompt = "assistant_system_prompt"
+	// KeyAssistantEnabledAt 开启时刻（unix 秒）：只对开启后收到的用户消息生效，
+	// 避免一打开就对历史积压工单批量回复
+	KeyAssistantEnabledAt = "assistant_enabled_at"
 )
 
 func (s *Settings) BotToken() string      { return s.Get(KeyBotToken) }
@@ -161,6 +164,7 @@ func parseInt64(s string) int64 {
 
 // ———— LLM 助手配置 ————
 func (s *Settings) AssistantEnabled() bool   { return s.Get(KeyAssistantEnabled) == "true" }
+func (s *Settings) AssistantEnabledAt() int64 { return parseInt64(s.Get(KeyAssistantEnabledAt)) }
 func (s *Settings) AssistantBaseURL() string { return s.Get(KeyAssistantBaseURL) }
 func (s *Settings) AssistantAPIKey() string  { return s.Get(KeyAssistantAPIKey) }
 func (s *Settings) AssistantModel() string   { return s.Get(KeyAssistantModel) }

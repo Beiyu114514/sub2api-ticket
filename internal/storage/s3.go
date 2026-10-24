@@ -31,6 +31,10 @@ func (s *S3) Name() string { return "s3" }
 
 func (s *S3) ttl() time.Duration {
 	if s.presignTTL > 0 {
+		// S3 预签名最长 7 天（X-Amz-Expires 上限 604800）
+		if s.presignTTL > 7*24*time.Hour {
+			return 7 * 24 * time.Hour
+		}
 		return s.presignTTL
 	}
 	return 7 * 24 * time.Hour
@@ -113,6 +117,17 @@ func (s *S3) signedURL(key string, now time.Time) string {
 	sig := hex.EncodeToString(hmacSHA256(kSigning, []byte(stringToSign)))
 
 	return host + canonicalURI + "?" + canonicalQuery + "&X-Amz-Signature=" + sig
+}
+
+// Presign 生成 key 当前的预签名 GET URL（附件 URL 过期重签名用）
+func (s *S3) Presign(key string) string { return s.signedURL(key, time.Now()) }
+
+// SetPresignTTL 设置预签名有效期（S3 上限 7 天，超出按 7 天截断）
+func (s *S3) SetPresignTTL(d time.Duration) {
+	if d > 7*24*time.Hour {
+		d = 7 * 24 * time.Hour
+	}
+	s.presignTTL = d
 }
 
 func mustHost(u string) string {

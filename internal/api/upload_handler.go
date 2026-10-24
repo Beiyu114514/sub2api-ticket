@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,8 @@ func (h *UploadHandler) Upload(c *gin.Context) {
 	}
 	defer f.Close()
 	data := make([]byte, fh.Size)
-	if _, err := f.Read(data); err != nil {
+	// ReadFull：multipart Reader 单次 Read 可能短读，导致图片字节不完整
+	if _, err := io.ReadFull(f, data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "文件读取失败"})
 		return
 	}

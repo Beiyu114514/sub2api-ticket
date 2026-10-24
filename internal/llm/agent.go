@@ -40,12 +40,14 @@ func (a *Agent) tick() {
 	if !a.S.AssistantEnabled() || a.S.AssistantBaseURL() == "" || a.S.AssistantAPIKey() == "" || a.S.AssistantModel() == "" {
 		return
 	}
-	// 触发条件：open/pending + 最后一条来自 user + 静默超时 + 次数未满
+	// 触发条件：open/pending + 最后一条来自 user + 静默超时 + 次数未满。
+	// 只处理助手开启（或重新开启）之后收到的消息，不对历史积压工单批量回复。
 	var tickets []model.Ticket
 	silentBefore := time.Now().Add(-time.Duration(a.S.AssistantSilentMinutes()) * time.Minute)
+	enabledAt := time.Unix(a.S.AssistantEnabledAt(), 0)
 	if err := a.G.Where(
-		"status IN ? AND last_reply_by = ? AND last_reply_at <= ? AND assistant_replies < ?",
-		[]string{"open", "pending"}, "user", silentBefore, a.S.AssistantMaxReplies(),
+		"status IN ? AND last_reply_by = ? AND last_reply_at <= ? AND last_reply_at >= ? AND assistant_replies < ?",
+		[]string{"open", "pending"}, "user", silentBefore, enabledAt, a.S.AssistantMaxReplies(),
 	).Limit(5).Find(&tickets).Error; err != nil {
 		return
 	}

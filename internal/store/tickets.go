@@ -35,8 +35,9 @@ func ValidPriority(s string) bool {
 	return s == "low" || s == "normal" || s == "high"
 }
 
-// CreateTicket 建单 + 首条消息 + 管理员通知入队
-func (st *TicketStore) CreateTicket(u *model.User, subject, category, priority, content string) (*model.Ticket, *model.TicketMessage, error) {
+// CreateTicket 建单 + 首条消息（含附件）+ 管理员通知入队。
+// 附件随事务一并落库，避免“单已建、附件丢失”的中间态。
+func (st *TicketStore) CreateTicket(u *model.User, subject, category, priority, content string, atts ...storage.Attachment) (*model.Ticket, *model.TicketMessage, error) {
 	if priority == "" {
 		priority = "normal"
 	}
@@ -51,10 +52,11 @@ func (st *TicketStore) CreateTicket(u *model.User, subject, category, priority, 
 	}
 	now := time.Now()
 	msg := &model.TicketMessage{
-		SenderRole: "user",
-		SenderName: u.Username,
-		Content:    content,
-		Via:        "web",
+		SenderRole:  "user",
+		SenderName:  u.Username,
+		Content:     content,
+		Attachments: storage.EncodeAttachments(atts),
+		Via:         "web",
 	}
 	err := st.G.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(t).Error; err != nil {

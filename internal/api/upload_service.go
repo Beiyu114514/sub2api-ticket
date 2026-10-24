@@ -36,25 +36,73 @@ type S3Config struct {
 // backend 按设置构造当前存储后端
 func (s *UploadService) backend() storage.Backend {
 	if s.Settings.StorageMode() == "s3" {
-		var cfg S3Config
-		if err := json.Unmarshal([]byte(s.Settings.StorageS3JSON()), &cfg); err == nil && cfg.Endpoint != "" && cfg.Bucket != "" {
-			return &storage.S3{
-				Endpoint:   cfg.Endpoint,
-				Region:     cfg.Region,
-				Bucket:     cfg.Bucket,
-				AccessKey:  cfg.AccessKey,
-				SecretKey:  cfg.SecretKey,
-				PathStyle:  cfg.PathStyle,
-				PublicBase: cfg.PublicBase,
-			}
+		if b := s.s3Backend(); b != nil {
+			return b
 		}
 		// S3 配置不完整时降级 local，避免上传全挂
 	}
+	return s.localBackend()
+}
+
+// s3Backend 按设置构造 S3 后端；配置不完整返回 nil
+func (s *UploadService) s3Backend() *storage.S3 {
+	var cfg S3Config
+	if err := json.Unmarshal([]byte(s.Settings.StorageS3JSON()), &cfg); err != nil || cfg.Endpoint == "" || cfg.Bucket == "" {
+		return nil
+	}
+	b := &storage.S3{
+		Endpoint:   cfg.Endpoint,
+		Region:     cfg.Region,
+		Bucket:     cfg.Bucket,
+		AccessKey:  cfg.AccessKey,
+		SecretKey:  cfg.SecretKey,
+		PathStyle:  cfg.PathStyle,
+		PublicBase: cfg.PublicBase,
+	}
+	// 预签名有效期与本地模式共用同一 TTL 设置（SetPresignTTL 内部按 S3 7 天上限截断）
+	b.SetPresignTTL(time.Duration(s.Settings.StorageURLTTLHours()) * time.Hour)
+	return b
+}
+
+// localBackend 按设置构造本地磁盘后端
+func (s *UploadService) localBackend() *storage.Local {
 	return &storage.Local{
 		Root:    s.Settings.StorageLocalDir(),
 		SignKey: s.Settings.StorageSignKey(),
 		URLTTL:  time.Duration(s.Settings.StorageURLTTLHours()) * time.Hour,
 	}
+}
+
+// ResignAttachments 刷新附件访问 URL：上传时落库的签名 URL 会过期，
+// 按 Upload 记录的实际存储后端用当前时间重签。key 解析或记录缺失时保留原 URL。
+func (s *UploadService) ResignAttachments(list []storage.Attachment) []storage.Attachment {
+	if list == nil {
+		return nil
+	}
+	out := make([]storage.Attachment, len(list))
+	for i, a := range list {
+		out[i] = a
+		key, err := keyFromURL(a.URL)
+		if err != nil {
+			continue
+		}
+		var rec model.Upload
+		if err := s.G.Where("key = ?", key).First(&rec).Error; err != nil {
+			continue
+		}
+		if rec.Storage == "s3" {
+			if b := s.s3Backend(); b != nil {
+				if b.PublicBase != "" {
+					out[i].URL = strings.TrimSuffix(b.PublicBase, "/") + "/" + key
+				} else {
+					out[i].URL = b.Presign(key)
+				}
+			}
+			continue
+		}
+		out[i].URL = s.localBackend().SignedURL(key, time.Now())
+	}
+	return out
 }
 
 // 简单内存限速：每用户每分钟最多 10 次

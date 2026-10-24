@@ -121,19 +121,21 @@ func (h *TicketHandler) Create(c *gin.Context) {
 		return
 	}
 
-	t, msg, err := h.Tickets.CreateTicket(u, req.Subject, req.Category, req.Priority, req.Content)
+	// 附件先校验归属，再随建单事务一并落库，保证原子性
+	var atts []storage.Attachment
+	if len(req.Attachments) > 0 {
+		atts = resolveAttachments(UploadHandler{h.Deps}, c, u, req.Attachments)
+		if atts == nil {
+			return
+		}
+	}
+	t, msg, err := h.Tickets.CreateTicket(u, req.Subject, req.Category, req.Priority, req.Content, atts...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
-	if len(req.Attachments) > 0 {
-		atts := resolveAttachments(UploadHandler{h.Deps}, c, u, req.Attachments)
-		if atts == nil {
-			return
-		}
-		if err := h.Tickets.SetMessageAttachments(msg.ID, atts); err == nil {
-			(&UploadService{h.Deps}).RebindTicketToUploads(u.ID, t.ID, atts)
-		}
+	if len(atts) > 0 {
+		(&UploadService{h.Deps}).RebindTicketToUploads(u.ID, t.ID, atts)
 	}
 	msg.Content = "" // 首条消息在详情里看
 	c.JSON(http.StatusOK, gin.H{"ticket": t, "first_message": msg})
@@ -149,6 +151,16 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 	var messages []model.TicketMessage
 	h.G.Where("ticket_id = ?", t.ID).Order("id ASC").Limit(500).Find(&messages)
+
+	// 附件落库时带签名 URL，会过期：返回前按当前配置重签（仅改响应，不回写）
+	svc := &UploadService{h.Deps}
+	for i := range messages {
+		atts := storage.DecodeAttachments(messages[i].Attachments)
+		if len(atts) == 0 {
+			continue
+		}
+		messages[i].Attachments = storage.EncodeAttachments(svc.ResignAttachments(atts))
+	}
 
 	updates := map[string]any{}
 	if u.IsAdmin() {

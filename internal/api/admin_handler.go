@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -169,7 +170,12 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 		_ = h.Settings.Set(store.KeyStorageS3JSON, string(b))
 	}
 	if req.AssistantEnabled != nil {
+		was := h.Settings.AssistantEnabled()
 		_ = h.Settings.Set(store.KeyAssistantEnabled, boolStr(*req.AssistantEnabled))
+		// 记录开启时刻：助手只处理此后收到的用户消息，不回填历史工单
+		if *req.AssistantEnabled && !was {
+			_ = h.Settings.Set(store.KeyAssistantEnabledAt, strconv.FormatInt(time.Now().Unix(), 10))
+		}
 	}
 	if req.AssistantBaseURL != nil {
 		_ = h.Settings.Set(store.KeyAssistantBaseURL, strings.TrimRight(strings.TrimSpace(*req.AssistantBaseURL), "/"))

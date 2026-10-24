@@ -557,8 +557,14 @@ func (c *Core) bufferMediaGroup(u Update, m *Message) {
 				}
 			}
 			for _, x := range msgs[1:] {
-				head.Photo = append(head.Photo, x.Photo...)
+				// 只并各图的最大尺寸，聚合后逐项下载即可，避免同图多档尺寸重复上传
+				if lp := x.LargestPhoto(); lp != nil {
+					head.Photo = append(head.Photo, *lp)
+				}
 			}
+			head.PhotosMerged = len(head.Photo) > 0
+			// 清掉 media_group_id：否则重入 HandleUpdate 又会被当相册消息缓冲，无限循环
+			head.MediaGroupID = ""
 			c.SubmitTask(func() {
 				bot := c.newBot()
 				if bot.Valid() {
@@ -579,26 +585,16 @@ func (c *Core) collectPhotos(bot *Client, m *Message) []storage.Attachment {
 		}
 		return nil
 	}
-	// 每张图 TG 返回多组尺寸（不同 file_id）；聚合后按 FileSize 分组，
-	// 每组取最大的一个 file_id。同一张图的尺寸 file_id 不同但可按 width 唯一分组：
-	// 简化处理 —— 逐个尺寸下载会重复，这里按“每个消息一张图、聚合 Photo 按
-	// MessageID 已合并”的前提，取全局最大尺寸数量 = 相册张数不可靠，因此按
-	// PhotoSize 中 width 唯一性过滤缩略图（TG 缩略图 width 通常 ≤400）。
+	// 每张图 TG 返回多组尺寸（不同 file_id）。相册聚合消息（PhotosMerged）的
+	// Photo 已是各图最大尺寸，逐项下载；普通单图消息的 Photo 是同一张图的
+	// 多档尺寸，只取最大的一档，避免同图重复下载上传。
 	var fileIDs []struct{ id, name string }
-	seen := map[string]bool{}
-	for i := range m.Photo {
-		p := &m.Photo[i]
-		if p.Width <= 400 || seen[p.FileID] {
-			continue
+	if m.PhotosMerged {
+		for i := range m.Photo {
+			fileIDs = append(fileIDs, struct{ id, name string }{m.Photo[i].FileID, ""})
 		}
-		seen[p.FileID] = true
+	} else if p := m.LargestPhoto(); p != nil {
 		fileIDs = append(fileIDs, struct{ id, name string }{p.FileID, ""})
-	}
-	if len(fileIDs) == 0 && len(m.Photo) > 0 {
-		// 只有缩略图（极端情况）：取最大者
-		if p := m.LargestPhoto(); p != nil {
-			fileIDs = append(fileIDs, struct{ id, name string }{p.FileID, ""})
-		}
 	}
 	if m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/") {
 		fileIDs = append(fileIDs, struct{ id, name string }{m.Document.FileID, m.Document.FileName})
