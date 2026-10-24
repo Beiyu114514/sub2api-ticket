@@ -5,6 +5,7 @@ import { api } from './api'
 import { store } from './store'
 import { applyTheme } from './theme'
 import './i18n'
+import './style.css'
 
 // —— iframe 入口参数处理：theme / lang / SSO token ——
 const q = new URLSearchParams(location.search)

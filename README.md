@@ -145,6 +145,16 @@ docker compose up -d
 docker compose logs -f
 ```
 
+> **注意（数据目录权限）**：容器以 UID `10001` 运行。如果 `./data` 是由 Docker 自动创建的（属主 root），首次启动会报
+> `数据库初始化失败: unable to open database file` 并循环重启。请先手动创建并授权：
+>
+> ```bash
+> mkdir -p data && sudo chown -R 10001:10001 data
+> ```
+>
+> **端口**：`docker-compose.yml` 默认只映射 `127.0.0.1:8081:8080`（仅本机可访问，需由前置反代转发）。
+> 下方 Nginx/Caddy 示例中的 `8080` 端口对应的是二进制部署；Docker 部署请把反代指向 `127.0.0.1:8081`，或在 compose 中自行调整映射。
+
 ### 方式二：二进制部署
 
 前往 [Releases](https://github.com/Beiyu114514/sub2api-ticket/releases) 下载对应平台的二进制文件：
