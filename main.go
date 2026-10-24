@@ -49,6 +49,7 @@ func main() {
 			Rebind:    upSvc.RebindTicketToUploads,
 		},
 	}
+	upSvc.CleanOrphanUploads()
 
 	if err := authSvc.EnsureLocalAdmin(); err != nil {
 		log.Printf("创建本地管理员失败: %v", err)
