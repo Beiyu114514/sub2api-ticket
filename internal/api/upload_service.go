@@ -7,11 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
 
 	"sub2api-ticket/internal/model"
 	"sub2api-ticket/internal/storage"
@@ -136,6 +136,25 @@ func (s *UploadService) SaveImage(ctx context.Context, u *model.User, data []byt
 	}, nil
 }
 
+// SaveImageAny tgbot 钩子入口（u 必须是 *model.User；用 any 解耦包依赖）
+func (s *UploadService) SaveImageAny(u any, data []byte, origName string) (*storage.Attachment, error) {
+	mu, ok := u.(*model.User)
+	if !ok || mu == nil {
+		return nil, fmt.Errorf("无效用户")
+	}
+	return s.SaveImage(context.Background(), mu, data, origName)
+}
+
+// OpenImageByKey 按 key 读取对象（TG 管理员群转发附件场景）
+func (s *UploadService) OpenImageByKey(ctx context.Context, key string) (io.ReadCloser, string, error) {
+	var rec model.Upload
+	if err := s.G.Where("key = ?", key).First(&rec).Error; err != nil {
+		return nil, "", fmt.Errorf("对象不存在")
+	}
+	rc, err := s.backend().Open(ctx, key)
+	return rc, rec.Mime, err
+}
+
 // ResolveAttachments 校验 attachments 引用归属（key 必须是上传者本人 Upload 记录），
 // 返回规范化后的附件列表。max 默认 5。
 func (s *UploadService) ResolveAttachments(u *model.User, urls []string, max int) ([]storage.Attachment, error) {
@@ -214,7 +233,11 @@ func (s *UploadService) RebindTicketToUploads(userID, ticketID uint, atts []stor
 	if len(keys) == 0 {
 		return
 	}
-	s.G.Model(&model.Upload{}).
-		Where("user_id = ? AND ticket_id = 0 AND key IN ?", userID, keys).
-		Update("ticket_id", ticketID)
+	q := s.G.Model(&model.Upload{}).
+		Where("ticket_id = 0 AND key IN ?", keys)
+	if userID != 0 {
+		// TG 管理员群上传等无归属用户场景传 0：跳过归属过滤
+		q = q.Where("user_id = ?", userID)
+	}
+	q.Update("ticket_id", ticketID)
 }

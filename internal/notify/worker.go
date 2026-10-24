@@ -1,14 +1,18 @@
 package notify
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	"sub2api-ticket/internal/model"
+	"sub2api-ticket/internal/storage"
 	"sub2api-ticket/internal/store"
 	"sub2api-ticket/internal/tgbot"
 )
@@ -126,7 +130,10 @@ func (w *Worker) dispatch(n *model.Notification) error {
 		_, err = bot.SendMessage(tgbot.SendMessageOpts{
 			ChatID: chatID, MessageThreadID: threadID, Text: text, DisableWebPagePreview: true,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return w.sendAttachments(bot, chatID, threadID, p.MessageID)
 
 	case model.NotifyUserNewReply:
 		var msg model.TicketMessage
@@ -147,7 +154,10 @@ func (w *Worker) dispatch(n *model.Notification) error {
 		_, err := bot.SendMessage(tgbot.SendMessageOpts{
 			ChatID: user.TGChatID, Text: text, ReplyMarkup: kb, DisableWebPagePreview: true,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return w.sendAttachments(bot, user.TGChatID, 0, p.MessageID)
 
 	case model.NotifyUserStatus:
 		// 话题状态同步始终执行（best effort）
@@ -190,4 +200,92 @@ func itoa(n uint) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// sendAttachments 消息带图片时，下载对象后用 sendPhoto/sendMediaGroup 转发到 TG。
+// 需要拿到原始字节（S3/本地均可），经 Core.Uploads.OpenByKey 读取。
+func (w *Worker) sendAttachments(bot *tgbot.Client, chatID int64, threadID int, messageID uint) error {
+	var msg model.TicketMessage
+	if err := w.G.First(&msg, messageID).Error; err != nil {
+		return nil
+	}
+	atts := storage.DecodeAttachments(msg.Attachments)
+	if len(atts) == 0 {
+		return nil
+	}
+	if w.Core == nil || w.Core.Uploads == nil || w.Core.Uploads.OpenByKey == nil {
+		return nil
+	}
+	// 下载前 5 张（与消息附件上限一致）
+	type item struct {
+		rc   io.ReadCloser
+		mime string
+	}
+	items := make([]item, 0, len(atts))
+	defer func() {
+		for _, it := range items {
+			it.rc.Close()
+		}
+	}()
+	for _, a := range atts {
+		if len(items) >= 5 {
+			break
+		}
+		key, err := attachmentKey(a.URL)
+		if err != nil {
+			continue
+		}
+		rc, mime, err := w.Core.Uploads.OpenByKey(context.Background(), key)
+		if err != nil {
+			continue
+		}
+		items = append(items, item{rc: rc, mime: mime})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	// TG 不接受 URL 直接发图（需可公网访问），这里逐张上传字节。
+	// sendPhoto/sendMediaGroup 支持 multipart file 上传。
+	if len(items) == 1 {
+		data, err := io.ReadAll(items[0].rc)
+		if err != nil {
+			return nil
+		}
+		return bot.UploadPhoto(chatID, threadID, data, items[0].mime, "")
+	}
+	inputs := make([]tgbot.MediaInput, 0, len(items))
+	for i, it := range items {
+		data, err := io.ReadAll(it.rc)
+		if err != nil {
+			continue
+		}
+		inputs = append(inputs, tgbot.MediaInput{Data: data, Mime: it.mime,
+			Caption: firstCaption(i, msg.Content)})
+	}
+	if len(inputs) == 0 {
+		return nil
+	}
+	return bot.UploadMediaGroup(chatID, threadID, inputs)
+}
+
+func firstCaption(i int, content string) string {
+	if i == 0 && content != "" && content != "[图片]" {
+		return content
+	}
+	return ""
+}
+
+// attachmentKey 从附件 URL 提取对象 key（与 api.keyFromURL 同规则）
+func attachmentKey(raw string) (string, error) {
+	if i := strings.Index(raw, "?"); i >= 0 {
+		raw = raw[:i]
+	}
+	if j := strings.Index(raw, "/uploads/"); j >= 0 {
+		return strings.TrimPrefix(raw[j+len("/uploads/"):], "/"), nil
+	}
+	parts := strings.Split(strings.Trim(raw, "/"), "/")
+	if len(parts) >= 3 {
+		return strings.Join(parts[len(parts)-3:], "/"), nil
+	}
+	return "", errors.New("无法解析 key")
 }

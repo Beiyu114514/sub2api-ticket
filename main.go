@@ -35,6 +35,7 @@ func main() {
 	s2a := sub2api.New(cfg.Sub2APIBaseURL, cfg.Sub2APIVerifyPath, cfg.Sub2APIUserPath, cfg.Sub2APIAdminAPIKey)
 	authSvc := auth.NewService(g, cfg, s2a)
 	workerPool := tgbot.NewWorkerPool(16, 256)
+	upSvc := &api.UploadService{Deps: api.Deps{G: g, Settings: settings}}
 	core := &tgbot.Core{
 		G:             g,
 		S:             settings,
@@ -42,6 +43,11 @@ func main() {
 		PublicBaseURL: cfg.PublicBaseURL,
 		TGProxy:       cfg.TGProxy,
 		Pool:          workerPool,
+		Uploads: &tgbot.SaveImageDeps{
+			SaveImage: upSvc.SaveImageAny,
+			OpenByKey: upSvc.OpenImageByKey,
+			Rebind:    upSvc.RebindTicketToUploads,
+		},
 	}
 
 	if err := authSvc.EnsureLocalAdmin(); err != nil {

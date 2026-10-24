@@ -80,12 +80,44 @@ type Message struct {
 	Chat               Chat               `json:"chat"`
 	Date               int64              `json:"date"`
 	Text               string             `json:"text"`
+	Caption            string             `json:"caption"`
+	MediaGroupID       string             `json:"media_group_id"`
+	Photo              []PhotoSize        `json:"photo"`
+	Document           *Document          `json:"document"`
 	MessageThreadID    int                `json:"message_thread_id"`
 	IsAutomaticForward bool               `json:"is_automatic_forward"`
 	ForumTopicCreated  *ForumTopicCreated `json:"forum_topic_created"`
 	ForumTopicClosed   *map[string]any    `json:"forum_topic_closed"`
 	ForumTopicReopened *map[string]any    `json:"forum_topic_reopened"`
 	ReplyToMessage     *Message           `json:"reply_to_message"`
+}
+
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int64  `json:"file_size"`
+}
+
+type Document struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+	FileSize int64  `json:"file_size"`
+}
+
+// LargestPhoto 取最大尺寸的 photo（发图消息）
+func (m *Message) LargestPhoto() *PhotoSize {
+	if len(m.Photo) == 0 {
+		return nil
+	}
+	best := &m.Photo[0]
+	for i := range m.Photo {
+		if m.Photo[i].FileSize > best.FileSize {
+			best = &m.Photo[i]
+		}
+	}
+	return best
 }
 
 type ForumTopicCreated struct {
@@ -252,6 +284,53 @@ func (c *Client) ReopenForumTopic(chatID int64, threadID int) error {
 
 func (c *Client) AnswerCallbackQuery(id, text string) {
 	_ = c.call("answerCallbackQuery", map[string]any{"callback_query_id": id, "text": text}, &struct{}{})
+}
+
+// SendPhoto 发送单张图片（可带 caption）
+func (c *Client) SendPhoto(chatID int64, threadID int, fileID, caption string) (int, error) {
+	params := map[string]any{
+		"chat_id": chatID, "photo": fileID, "parse_mode": "HTML",
+	}
+	if threadID > 0 {
+		params["message_thread_id"] = threadID
+	}
+	if caption != "" {
+		params["caption"] = caption
+	}
+	var out struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			MessageID int `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := c.call("sendPhoto", params, &out); err != nil {
+		return 0, err
+	}
+	return out.Result.MessageID, nil
+}
+
+// SendMediaGroupInput sendMediaGroup 单条输入（photo 或 file_id 引用）
+type SendMediaGroupInput struct {
+	FileID  string
+	Caption string
+}
+
+// SendMediaGroup 发送图组（2-10 张）
+func (c *Client) SendMediaGroup(chatID int64, threadID int, items []SendMediaGroupInput) error {
+	media := make([]map[string]any, 0, len(items))
+	for i, it := range items {
+		e := map[string]any{"type": "photo", "media": it.FileID}
+		if i == 0 && it.Caption != "" {
+			e["caption"] = it.Caption
+			e["parse_mode"] = "HTML"
+		}
+		media = append(media, e)
+	}
+	params := map[string]any{"chat_id": chatID, "media": media}
+	if threadID > 0 {
+		params["message_thread_id"] = threadID
+	}
+	return c.call("sendMediaGroup", params, &struct{ OK bool }{})
 }
 
 // call 统一请求：POST JSON，解析 {"ok":bool,"description":string}

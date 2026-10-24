@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"sub2api-ticket/internal/model"
+	"sub2api-ticket/internal/storage"
 	"sub2api-ticket/internal/store"
 )
 
@@ -25,6 +26,8 @@ type Core struct {
 	PublicBaseURL string
 	TGProxy       string
 	Pool          *UpdateWorkerPool
+	Uploads       *SaveImageDeps   // 图片上传钩子（main 装配时注入，可能为 nil）
+	groupBuf      mediaGroupBuffer // 相册聚合缓冲
 
 	// 群成员权限缓存，避免每条消息都打一次 getChatMember
 	memberMu    sync.Mutex
@@ -87,6 +90,11 @@ func (c *Core) HandleUpdate(bot *Client, u Update) {
 	if m.From != nil && m.From.IsBot {
 		return // 防回环
 	}
+	// 相册：同 media_group_id 的多条 update 聚合 1.5s 后作为一条消息处理
+	if m.MediaGroupID != "" && len(m.Photo) > 0 {
+		c.bufferMediaGroup(u, m)
+		return
+	}
 	if m.Chat.ID == c.S.AdminGroupID() {
 		c.onAdminGroup(bot, m)
 		return
@@ -124,7 +132,7 @@ func (c *Core) onAdminGroup(bot *Client, m *Message) {
 		c.onAdminCommand(bot, m, text)
 		return
 	}
-	if m.MessageThreadID == 0 || text == "" || m.IsAutomaticForward {
+	if m.MessageThreadID == 0 || m.IsAutomaticForward {
 		return
 	}
 	var tt model.TicketTopic
@@ -132,6 +140,26 @@ func (c *Core) onAdminGroup(bot *Client, m *Message) {
 		return // 非工单话题
 	}
 	name := senderDisplayName(m.From)
+	// 管理员群里的图片：下载后走正常上传链路，作为附件回复
+	if atts := c.collectPhotos(bot, m); len(atts) > 0 {
+		text := strings.TrimSpace(m.Caption)
+		if text != "" && strings.HasPrefix(text, "/") {
+			c.onAdminCommand(bot, m, text)
+			return
+		}
+		if _, _, err := c.T.AppendMessage(tt.TicketID, nil, "admin", name, text, "telegram", true, atts); err != nil {
+			c.reply(bot, m, "⚠️ 同步失败："+Escape(err.Error()))
+			return
+		}
+		if c.Uploads != nil && c.Uploads.Rebind != nil {
+			c.Uploads.Rebind(0, tt.TicketID, atts)
+		}
+		c.ackPhotos(bot, m, tt.TicketID)
+		return
+	}
+	if text == "" {
+		return
+	}
 	_, _, err := c.T.AppendMessage(tt.TicketID, nil, "admin", name, text, "telegram", true, nil)
 	if err != nil {
 		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID,
@@ -250,8 +278,9 @@ func (c *Core) SyncTopicStatus(bot *Client, ticket *model.Ticket, closed bool) {
 
 func (c *Core) onPrivate(bot *Client, m *Message) {
 	text := strings.TrimSpace(m.Text)
-	if text == "" {
-		return // v1 只处理文本
+	caption := strings.TrimSpace(m.Caption)
+	if text == "" && caption == "" && len(m.Photo) == 0 {
+		return
 	}
 	if strings.HasPrefix(text, "/start") {
 		arg := strings.TrimSpace(strings.TrimPrefix(text, "/start"))
@@ -283,6 +312,34 @@ func (c *Core) onPrivate(bot *Client, m *Message) {
 		return
 	}
 
+	// 图片消息：下载 → 上传服务处理 → 作为附件回复到当前工单
+	if atts := c.collectPhotos(bot, m); len(atts) > 0 {
+		content := caption
+		if content == "" {
+			content = "[图片]"
+		}
+		ticketID := c.pickTicket(u)
+		if ticketID == 0 {
+			bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
+				Text: "你当前没有进行中的工单。请到网页端创建工单后，再来这里发送。"})
+			return
+		}
+		_, _, err := c.T.AppendMessage(ticketID, u, "user", u.Username, content, "telegram", false, atts)
+		if err == store.ErrTicketClosed {
+			bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "该工单已关闭，请到网页端重新开启后再回复。"})
+			return
+		}
+		if err != nil {
+			bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, Text: "⚠️ 图片发送失败，请稍后再试。"})
+			return
+		}
+		if c.Uploads != nil && c.Uploads.Rebind != nil {
+			c.Uploads.Rebind(u.ID, ticketID, atts)
+		}
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
+			Text: fmt.Sprintf("✅ 图片已发送到工单 #%d（%d 张）", ticketID, len(atts))})
+		return
+	}
 	ticketID := c.pickTicket(u)
 	if ticketID == 0 {
 		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID,
@@ -470,4 +527,122 @@ func senderDisplayName(u *User) string {
 		return name + " (@" + u.Username + ")"
 	}
 	return name
+}
+
+// ———————— 图片消息 ————————
+
+// bufferMediaGroup 聚合相册消息；窗口关闭后合成一条带头消息（caption 在第一条）分发
+func (c *Core) bufferMediaGroup(u Update, m *Message) {
+	c.groupBuf.mu.Lock()
+	if c.groupBuf.items == nil {
+		c.groupBuf.items = map[string][]*Message{}
+		c.groupBuf.timer = map[string]*time.Timer{}
+	}
+	key := fmt.Sprintf("%d:%s", m.Chat.ID, m.MediaGroupID)
+	c.groupBuf.items[key] = append(c.groupBuf.items[key], m)
+	if _, ok := c.groupBuf.timer[key]; !ok {
+		g := key
+		c.groupBuf.timer[g] = time.AfterFunc(1500*time.Millisecond, func() {
+			msgs := c.groupBuf.take(g)
+			if len(msgs) == 0 {
+				return
+			}
+			head := msgs[0]
+			if head.Caption == "" {
+				for _, x := range msgs {
+					if x.Caption != "" {
+						head.Caption = x.Caption
+						break
+					}
+				}
+			}
+			for _, x := range msgs[1:] {
+				head.Photo = append(head.Photo, x.Photo...)
+			}
+			c.SubmitTask(func() {
+				bot := c.newBot()
+				if bot.Valid() {
+					c.HandleUpdate(bot, Update{Message: head})
+				}
+			})
+		})
+	}
+	c.groupBuf.mu.Unlock()
+}
+
+// collectPhotos 下载消息里的图片（photo 取每种尺寸中最大；image/* document 也接受），
+// 经 Uploads 钩子走完整上传链路（校验/压缩/审计/限速）。失败图片跳过并提示。
+func (c *Core) collectPhotos(bot *Client, m *Message) []storage.Attachment {
+	if c.Uploads == nil || c.Uploads.SaveImage == nil {
+		if len(m.Photo) > 0 {
+			log.Printf("[tgbot] Uploads 未注入，忽略图片消息 chat=%d", m.Chat.ID)
+		}
+		return nil
+	}
+	// 每张图 TG 返回多组尺寸（不同 file_id）；聚合后按 FileSize 分组，
+	// 每组取最大的一个 file_id。同一张图的尺寸 file_id 不同但可按 width 唯一分组：
+	// 简化处理 —— 逐个尺寸下载会重复，这里按“每个消息一张图、聚合 Photo 按
+	// MessageID 已合并”的前提，取全局最大尺寸数量 = 相册张数不可靠，因此按
+	// PhotoSize 中 width 唯一性过滤缩略图（TG 缩略图 width 通常 ≤400）。
+	var fileIDs []struct{ id, name string }
+	seen := map[string]bool{}
+	for i := range m.Photo {
+		p := &m.Photo[i]
+		if p.Width <= 400 || seen[p.FileID] {
+			continue
+		}
+		seen[p.FileID] = true
+		fileIDs = append(fileIDs, struct{ id, name string }{p.FileID, ""})
+	}
+	if len(fileIDs) == 0 && len(m.Photo) > 0 {
+		// 只有缩略图（极端情况）：取最大者
+		if p := m.LargestPhoto(); p != nil {
+			fileIDs = append(fileIDs, struct{ id, name string }{p.FileID, ""})
+		}
+	}
+	if m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/") {
+		fileIDs = append(fileIDs, struct{ id, name string }{m.Document.FileID, m.Document.FileName})
+	}
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	var u *model.User
+	if m.Chat.Type == "private" {
+		u = c.userByChatID(m.Chat.ID)
+		if u == nil {
+			return nil // 未绑定用户在 onPrivate 前置分支已提示
+		}
+	} else {
+		// 管理员群：无对应用户，构造占位用户落审计（SaveImage 内部有全局限速兜底）
+		u = &model.User{Username: senderDisplayName(m.From)}
+	}
+	var atts []storage.Attachment
+	var lastErr error
+	for _, f := range fileIDs {
+		if len(atts) >= 5 {
+			break // 与 Web 端一致：每条消息最多 5 张
+		}
+		data, err := bot.DownloadFile(f.id)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		att, err := c.Uploads.SaveImage(u, data, f.name)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		atts = append(atts, *att)
+	}
+	if len(atts) == 0 && lastErr != nil {
+		bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID,
+			Text: "⚠️ 图片处理失败：" + Escape(lastErr.Error())})
+	}
+	return atts
+}
+
+// ackPhotos 管理员群图片同步成功后的简短确认
+func (c *Core) ackPhotos(bot *Client, m *Message, ticketID uint) {
+	bot.SendMessage(SendMessageOpts{ChatID: m.Chat.ID, MessageThreadID: m.MessageThreadID,
+		Text: fmt.Sprintf("✅ 图片已同步到工单 #%d", ticketID)})
 }
