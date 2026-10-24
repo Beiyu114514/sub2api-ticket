@@ -159,6 +159,28 @@ func (w *Worker) dispatch(n *model.Notification) error {
 		}
 		return w.sendAttachments(bot, user.TGChatID, 0, p.MessageID)
 
+	case model.NotifyUserAssistant:
+		// AI 自动回复 → 推送绑定 TG 的用户（复用 user_new_reply 渲染，带 AI 标识）
+		var msg model.TicketMessage
+		if err := w.G.First(&msg, p.MessageID).Error; err != nil {
+			return errors.New("消息不存在")
+		}
+		var user model.User
+		if err := w.G.First(&user, ticket.UserID).Error; err != nil {
+			return nil
+		}
+		if user.TGChatID == 0 {
+			return nil
+		}
+		text := tgbot.RenderUserNewReply(ticket.ID, ticket.Subject, "🤖 "+msg.SenderName, msg.Content, w.Core.TicketURL(ticket.ID))
+		kb := &tgbot.InlineKeyboardMarkup{InlineKeyboard: [][]tgbot.InlineKeyboardButton{{
+			{Text: "↩️ 回复此工单", CallbackData: "pick_ticket:" + itoa(ticket.ID)},
+		}}}
+		_, err := bot.SendMessage(tgbot.SendMessageOpts{
+			ChatID: user.TGChatID, Text: text, ReplyMarkup: kb, DisableWebPagePreview: true,
+		})
+		return err
+
 	case model.NotifyUserStatus:
 		// 话题状态同步始终执行（best effort）
 		w.Core.SyncTopicStatus(bot, &ticket, p.Status == "closed")

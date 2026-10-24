@@ -30,6 +30,14 @@ func (h *AdminHandler) GetSettings(c *gin.Context) {
 		"storage_local_dir":    h.Settings.StorageLocalDir(),
 		"storage_url_ttl_hrs":  h.Settings.StorageURLTTLHours(),
 		"storage_s3":           maskS3Config(h.Settings.StorageS3JSON()),
+		"assistant_enabled":       h.Settings.AssistantEnabled(),
+		"assistant_base_url":      h.Settings.AssistantBaseURL(),
+		"assistant_has_api_key":   h.Settings.AssistantAPIKey() != "",
+		"assistant_model":         h.Settings.AssistantModel(),
+		"assistant_temperature":   h.Settings.AssistantTemperature(),
+		"assistant_silent_minutes": h.Settings.AssistantSilentMinutes(),
+		"assistant_max_replies":   h.Settings.AssistantMaxReplies(),
+		"assistant_system_prompt": h.Settings.AssistantSystemPrompt(),
 	})
 }
 
@@ -86,6 +94,14 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 			PathStyle  bool   `json:"use_path_style"`
 			PublicBase string `json:"public_base_url"`
 		} `json:"storage_s3"`
+		AssistantEnabled      *bool    `json:"assistant_enabled"`
+		AssistantBaseURL      *string  `json:"assistant_base_url"`
+		AssistantAPIKey       *string  `json:"assistant_api_key"`
+		AssistantModel        *string  `json:"assistant_model"`
+		AssistantTemperature  *float64 `json:"assistant_temperature"`
+		AssistantSilentMin    *int     `json:"assistant_silent_minutes"`
+		AssistantMaxReplies   *int     `json:"assistant_max_replies"`
+		AssistantSystemPrompt *string  `json:"assistant_system_prompt"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
@@ -151,6 +167,31 @@ func (h *AdminHandler) UpdateSettings(c *gin.Context) {
 		cfg.PublicBase = strings.TrimRight(in.PublicBase, "/")
 		b, _ := json.Marshal(cfg)
 		_ = h.Settings.Set(store.KeyStorageS3JSON, string(b))
+	}
+	if req.AssistantEnabled != nil {
+		_ = h.Settings.Set(store.KeyAssistantEnabled, boolStr(*req.AssistantEnabled))
+	}
+	if req.AssistantBaseURL != nil {
+		_ = h.Settings.Set(store.KeyAssistantBaseURL, strings.TrimRight(strings.TrimSpace(*req.AssistantBaseURL), "/"))
+	}
+	if req.AssistantAPIKey != nil && strings.TrimSpace(*req.AssistantAPIKey) != "" {
+		// 留空/不传 = 保持原值（前端只回显 has_api_key）
+		_ = h.Settings.Set(store.KeyAssistantAPIKey, strings.TrimSpace(*req.AssistantAPIKey))
+	}
+	if req.AssistantModel != nil {
+		_ = h.Settings.Set(store.KeyAssistantModel, strings.TrimSpace(*req.AssistantModel))
+	}
+	if req.AssistantTemperature != nil && *req.AssistantTemperature >= 0 && *req.AssistantTemperature <= 2 {
+		_ = h.Settings.Set(store.KeyAssistantTemperature, strconv.FormatFloat(*req.AssistantTemperature, 'f', -1, 64))
+	}
+	if req.AssistantSilentMin != nil && *req.AssistantSilentMin > 0 {
+		_ = h.Settings.Set(store.KeyAssistantSilentMin, strconv.Itoa(*req.AssistantSilentMin))
+	}
+	if req.AssistantMaxReplies != nil && *req.AssistantMaxReplies > 0 {
+		_ = h.Settings.Set(store.KeyAssistantMaxReplies, strconv.Itoa(*req.AssistantMaxReplies))
+	}
+	if req.AssistantSystemPrompt != nil {
+		_ = h.Settings.Set(store.KeyAssistantSystemPrompt, *req.AssistantSystemPrompt)
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

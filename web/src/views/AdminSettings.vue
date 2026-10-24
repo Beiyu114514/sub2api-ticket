@@ -18,6 +18,17 @@ const storageLocalDir = ref('')
 const storageTTL = ref(168)
 const s3 = ref({ endpoint: '', region: '', bucket: '', access_key: '', secret_key: '', use_path_style: false, public_base_url: '' })
 const s3HasSecret = ref(false)
+
+// AI 客服
+const aiEnabled = ref(false)
+const aiBaseURL = ref("")
+const aiAPIKey = ref("")
+const aiHasKey = ref(false)
+const aiModel = ref("")
+const aiTemp = ref(0.3)
+const aiSilent = ref(5)
+const aiMaxReplies = ref(5)
+const aiPrompt = ref("")
 const loading = ref(true)
 const busy = ref(false)
 const msg = ref('')
@@ -45,6 +56,14 @@ async function load() {
         use_path_style: !!c.use_path_style, public_base_url: c.public_base_url || '',
       }
       s3HasSecret.value = !!c.has_secret
+    aiEnabled.value = !!res.assistant_enabled
+    aiBaseURL.value = res.assistant_base_url || ""
+    aiHasKey.value = !!res.assistant_has_api_key
+    aiModel.value = res.assistant_model || ""
+    aiTemp.value = res.assistant_temperature ?? 0.3
+    aiSilent.value = res.assistant_silent_minutes ?? 5
+    aiMaxReplies.value = res.assistant_max_replies ?? 5
+    aiPrompt.value = res.assistant_system_prompt || ""
     }
     await refreshStatus()
   } catch (e) {
@@ -80,6 +99,16 @@ async function save() {
     // secret 留空 = 保持原值，不提交该字段
     if (s3c.secret_key.trim() === '') delete s3c.secret_key
     payload.storage_s3 = s3c
+    // AI 客服
+    payload.assistant_enabled = aiEnabled.value
+    payload.assistant_base_url = aiBaseURL.value.trim()
+    payload.assistant_model = aiModel.value.trim()
+    payload.assistant_temperature = Number(aiTemp.value) || 0.3
+    payload.assistant_silent_minutes = Number(aiSilent.value) || 5
+    payload.assistant_max_replies = Number(aiMaxReplies.value) || 5
+    payload.assistant_system_prompt = aiPrompt.value
+    if (aiAPIKey.value.trim() !== "") payload.assistant_api_key = aiAPIKey.value.trim()
+    aiAPIKey.value = ""
     await api.put('/api/v1/admin/settings', payload)
     botToken.value = ''
     msg.value = t('saved')
@@ -230,6 +259,51 @@ onMounted(() => {
         <div>
           <label class="label">签名 URL 有效期（小时）</label>
           <input v-model.number="storageTTL" type="number" min="1" max="720" class="input" />
+        </div>
+      </div>
+    </div>
+
+    <!-- AI 客服 -->
+    <div class="card p-6">
+      <h2 class="font-medium mb-4">AI 临时客服</h2>
+      <div class="space-y-5">
+        <label class="flex items-center gap-2 text-sm cursor-pointer">
+          <input v-model="aiEnabled" type="checkbox" class="w-4 h-4 accent-blue-600" />
+          启用 LLM 自动回复（OpenAI 兼容 API）
+        </label>
+        <p class="text-xs text-slate-400">用户发消息静默数分钟后无人回复时，AI 自动应答；人工回复后自动让位，每单最多回复有限次。</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="label">API Base URL</label>
+            <input v-model="aiBaseURL" class="input font-mono text-xs" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div>
+            <label class="label">模型</label>
+            <input v-model="aiModel" class="input font-mono text-xs" placeholder="gpt-4o-mini" />
+          </div>
+        </div>
+        <div>
+          <label class="label">API Key</label>
+          <input v-model="aiAPIKey" type="password" class="input font-mono text-xs"
+            :placeholder="aiHasKey ? '已配置，留空则不修改' : 'sk-...'" />
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="label">温度 (0-2)</label>
+            <input v-model.number="aiTemp" type="number" min="0" max="2" step="0.1" class="input" />
+          </div>
+          <div>
+            <label class="label">静默触发（分钟）</label>
+            <input v-model.number="aiSilent" type="number" min="1" class="input" />
+          </div>
+          <div>
+            <label class="label">每单最多回复</label>
+            <input v-model.number="aiMaxReplies" type="number" min="1" class="input" />
+          </div>
+        </div>
+        <div>
+          <label class="label">System Prompt</label>
+          <textarea v-model="aiPrompt" rows="4" class="input font-mono text-xs"></textarea>
         </div>
       </div>
     </div>

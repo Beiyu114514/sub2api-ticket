@@ -36,6 +36,8 @@ type Ticket struct {
 	UnreadAdminCount int `json:"unread_admin_count"`
 	UnreadUserCount  int `json:"unread_user_count"`
 
+	AssistantReplies int `json:"assistant_replies"` // 本单 LLM 自动回复计次
+
 	LastReplyAt time.Time  `json:"last_reply_at"`
 	LastReplyBy string     `json:"last_reply_by"` // user / admin / system
 	ClosedAt    *time.Time `json:"closed_at"`
@@ -124,4 +126,5 @@ const (
 	NotifyAdminNewReply  = "admin_new_reply"
 	NotifyUserNewReply   = "user_new_reply"
 	NotifyUserStatus     = "user_status"
+	NotifyUserAssistant  = "user_assistant_reply"
 )

@@ -3,6 +3,8 @@ package store
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,6 +75,16 @@ const (
 	KeyStorageSignKey   = "storage_sign_key"    // 本地签名 HMAC 密钥（随机生成）
 	KeyStorageS3JSON    = "storage_s3_json"     // S3 配置 JSON
 	KeyStorageURLTTLHrs = "storage_url_ttl_hrs" // 签名 URL 有效期小时，默认 168
+
+	// LLM 临时客服
+	KeyAssistantEnabled      = "assistant_enabled"
+	KeyAssistantBaseURL      = "assistant_base_url"
+	KeyAssistantAPIKey       = "assistant_api_key"
+	KeyAssistantModel        = "assistant_model"
+	KeyAssistantTemperature  = "assistant_temperature"
+	KeyAssistantSilentMin    = "assistant_silent_minutes"
+	KeyAssistantMaxReplies   = "assistant_max_replies_per_ticket"
+	KeyAssistantSystemPrompt = "assistant_system_prompt"
 )
 
 func (s *Settings) BotToken() string      { return s.Get(KeyBotToken) }
@@ -144,4 +156,40 @@ func parseInt64(s string) int64 {
 		return -n
 	}
 	return n
+}
+
+
+// ———— LLM 助手配置 ————
+func (s *Settings) AssistantEnabled() bool   { return s.Get(KeyAssistantEnabled) == "true" }
+func (s *Settings) AssistantBaseURL() string { return s.Get(KeyAssistantBaseURL) }
+func (s *Settings) AssistantAPIKey() string  { return s.Get(KeyAssistantAPIKey) }
+func (s *Settings) AssistantModel() string   { return s.Get(KeyAssistantModel) }
+func (s *Settings) AssistantTemperature() float64 {
+	if v := parseFloat(s.Get(KeyAssistantTemperature)); v > 0 {
+		return v
+	}
+	return 0.3
+}
+func (s *Settings) AssistantSilentMinutes() int {
+	if v := parseInt64(s.Get(KeyAssistantSilentMin)); v > 0 {
+		return int(v)
+	}
+	return 5
+}
+func (s *Settings) AssistantMaxReplies() int {
+	if v := parseInt64(s.Get(KeyAssistantMaxReplies)); v > 0 {
+		return int(v)
+	}
+	return 5
+}
+func (s *Settings) AssistantSystemPrompt() string {
+	if v := s.Get(KeyAssistantSystemPrompt); v != "" {
+		return v
+	}
+	return "你是工单系统的临时客服助手。请礼貌、简洁地回答用户问题；无法确定的问题请如实说明并建议等待人工客服。不要编造事实，不要承诺具体处理时间。"
+}
+
+func parseFloat(s string) float64 {
+	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return f
 }

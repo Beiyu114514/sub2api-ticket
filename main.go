@@ -13,6 +13,7 @@ import (
 	"sub2api-ticket/internal/auth"
 	"sub2api-ticket/internal/config"
 	"sub2api-ticket/internal/db"
+	"sub2api-ticket/internal/llm"
 	"sub2api-ticket/internal/notify"
 	"sub2api-ticket/internal/static"
 	"sub2api-ticket/internal/store"
@@ -64,6 +65,7 @@ func main() {
 	registerSPA(r)
 
 	go (&notify.Worker{G: g, S: settings, T: tickets, Core: core, TGProxy: cfg.TGProxy}).Run()
+	go (&llm.Agent{G: g, S: settings, T: tickets}).Run()
 	if cfg.TGPolling {
 		go pollingLoop(core)
 	}

@@ -79,12 +79,14 @@ async function setStatus(status) {
 function side(msg) {
   // 气泡方向：自己的消息在右侧
   if (msg.sender_role === 'system') return 'center'
+  if (msg.sender_role === 'assistant') return 'left'
   if (msg.sender_role === 'admin') return store.isAdmin ? 'right' : 'left'
   return store.isAdmin ? 'left' : 'right'
 }
 
 function roleLabel(msg) {
   if (msg.sender_role === 'system') return t('system')
+  if (msg.sender_role === 'assistant') return '🤖 AI'
   if (msg.sender_role === 'admin') return t('admin')
   return store.isAdmin ? t('user') : t('user')
 }
@@ -195,6 +197,7 @@ onUnmounted(() => {
                 <span class="font-medium">{{ m.sender_name }}</span>
                 <span>{{ roleLabel(m) }}</span>
                 <span v-if="m.via === 'telegram'" class="px-1 rounded bg-sky-500/20 text-sky-600 dark:text-sky-300 text-[10px]">TG</span>
+                <span v-if="m.sender_role === 'assistant'" class="px-1 rounded bg-violet-500/20 text-violet-600 dark:text-violet-300 text-[10px]">AI 生成</span>
                 <span>{{ fmtTime(m.created_at) }}</span>
               </div>
               <p class="whitespace-pre-wrap break-words text-sm leading-relaxed">{{ m.content }}</p>
