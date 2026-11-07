@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 
@@ -11,13 +12,23 @@ import (
 	"sub2api-ticket/internal/storage"
 )
 
+// maxUploadBody 在解析 multipart 前限制请求体，避免超大文件先落盘再被拒绝。
+// 比 10MB 文件上限留出 multipart 头部/边界余量。
+const maxUploadBody = 12 << 20
+
 type UploadHandler struct{ Deps }
 
 // Upload POST /api/v1/uploads（multipart file 字段）
 func (h *UploadHandler) Upload(c *gin.Context) {
 	u := c.MustGet("user").(*model.User)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBody)
 	fh, err := c.FormFile("file")
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（上限 10MB）"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 file 字段"})
 		return
 	}

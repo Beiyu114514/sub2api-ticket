@@ -110,9 +110,9 @@ func (s *Service) RequireAdmin() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
 			return
 		}
-		// 如果是 sub2api 映射用户且较久未向源站核对，进行轻量复验
+		// 如果是 TokenRouter 映射用户且较久未向源站核对，通过 MCP 进行轻量复验
 		if u.Sub2APIID > 0 && time.Since(u.LastSeenAt) > 10*time.Minute {
-			if s.Sub2API != nil && s.Cfg.Sub2APIAdminAPIKey != "" {
+			if s.Sub2API != nil && s.Sub2API.MCPConfigured() {
 				info, err := s.Sub2API.GetAdminUser(u.Sub2APIID)
 				if err != nil || info.NormalizeRole() != "admin" {
 					// 角色降级或账号已不存在，更新本地状态并阻断

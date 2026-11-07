@@ -21,9 +21,10 @@ type Config struct {
 	Sub2APIBaseURL string
 	// 用于校验透传 JWT 的用户级接口路径（不同版本可能不同，可覆盖）
 	Sub2APIVerifyPath string
-	// 管理员 API Key（sub2api 后台生成），用于查询用户资料
-	Sub2APIAdminAPIKey string
-	Sub2APIUserPath    string // GET /api/v1/admin/users/:id
+	// TokenRouter MCP 专用访问令牌，需具备 users.get 权限，用于查询用户资料
+	Sub2APIMCPToken string
+	// MCP Streamable HTTP 端点路径（TokenRouter 默认 /mcp），也可填写完整 URL
+	Sub2APIMCPPath string
 
 	// 本地兜底管理员（首次启动时若无该账号则创建）
 	AdminEmail    string
@@ -38,18 +39,18 @@ type Config struct {
 
 func Load() (*Config, error) {
 	c := &Config{
-		ListenAddr:         env("LISTEN_ADDR", ":8080"),
-		DBPath:             env("DB_PATH", "data/ticket.db"),
-		PublicBaseURL:      strings.TrimRight(env("PUBLIC_BASE_URL", ""), "/"),
-		CookieSameSite:     strings.ToLower(env("COOKIE_SAMESITE", "lax")),
-		Sub2APIBaseURL:     strings.TrimRight(env("SUB2API_BASE_URL", ""), "/"),
-		Sub2APIVerifyPath:  env("SUB2API_VERIFY_PATH", "/api/v1/auth/me"),
-		Sub2APIAdminAPIKey: env("SUB2API_ADMIN_API_KEY", ""),
-		Sub2APIUserPath:    env("SUB2API_USER_PATH", "/api/v1/admin/users"),
-		AdminEmail:         env("ADMIN_EMAIL", ""),
-		AdminPassword:      env("ADMIN_PASSWORD", ""),
-		TGPolling:          env("TG_POLLING", "false") == "true",
-		TGProxy:            env("TG_PROXY", ""),
+		ListenAddr:        env("LISTEN_ADDR", ":8080"),
+		DBPath:            env("DB_PATH", "data/ticket.db"),
+		PublicBaseURL:     strings.TrimRight(env("PUBLIC_BASE_URL", ""), "/"),
+		CookieSameSite:    strings.ToLower(env("COOKIE_SAMESITE", "lax")),
+		Sub2APIBaseURL:    strings.TrimRight(env("SUB2API_BASE_URL", ""), "/"),
+		Sub2APIVerifyPath: env("SUB2API_VERIFY_PATH", "/api/v1/auth/me"),
+		Sub2APIMCPToken:   envAny("", "SUB2API_MCP_TOKEN", "TOKENROUTER_MCP_TOKEN"),
+		Sub2APIMCPPath:    envAny("/mcp", "SUB2API_MCP_PATH", "TOKENROUTER_MCP_PATH"),
+		AdminEmail:        env("ADMIN_EMAIL", ""),
+		AdminPassword:     env("ADMIN_PASSWORD", ""),
+		TGPolling:         env("TG_POLLING", "false") == "true",
+		TGProxy:           env("TG_PROXY", ""),
 	}
 	if c.PublicBaseURL != "" {
 		if _, err := url.Parse(c.PublicBaseURL); err != nil {
@@ -73,6 +74,15 @@ func env(key, def string) string {
 		return def
 	}
 	return v
+}
+
+func envAny(def string, keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return def
 }
 
 func envInt(key string, def int) int {

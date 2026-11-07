@@ -18,6 +18,8 @@ const (
 	maxDimension = 1920
 	jpegQuality  = 82
 	maxUpload    = 10 << 20 // 10MB
+	// 解码前按头部声明的宽高限制像素数，防止小文件声明超大尺寸的压缩炸弹耗尽内存
+	maxPixels = 50 * 1000 * 1000
 )
 
 // allowedMime magic bytes 校验通过后允许的类型
@@ -74,6 +76,10 @@ func ProcessImage(data []byte) (out []byte, mime string, w, h int, err error) {
 	}
 	if mime == "image/gif" || mime == "image/webp" {
 		return data, mime, w, h, nil
+	}
+	// 仅 jpeg/png 会全量解码；按头部尺寸先拦截压缩炸弹
+	if w <= 0 || h <= 0 || int64(w)*int64(h) > maxPixels {
+		return nil, "", 0, 0, fmt.Errorf("图片像素过大（上限 5000 万像素）")
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {

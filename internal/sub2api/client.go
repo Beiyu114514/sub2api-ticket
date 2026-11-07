@@ -10,24 +10,24 @@ import (
 	"time"
 )
 
-// Client 调用 sub2api 的两类接口：
+// Client 调用 TokenRouter / sub2api 的两类接口：
 //  1. 用户级接口（Bearer 透传 JWT）验证 token 有效性
-//  2. Admin API（x-api-key）查询用户资料
+//  2. MCP 管理接口（Bearer MCP Token）查询用户资料
 type Client struct {
-	BaseURL     string
-	VerifyPath  string
-	UserPath    string
-	AdminAPIKey string
-	HTTP        *http.Client
+	BaseURL    string
+	VerifyPath string
+	MCPPath    string
+	MCPToken   string
+	HTTP       *http.Client
 }
 
-func New(baseURL, verifyPath, userPath, adminAPIKey string) *Client {
+func New(baseURL, verifyPath, mcpPath, mcpToken string) *Client {
 	return &Client{
-		BaseURL:     baseURL,
-		VerifyPath:  verifyPath,
-		UserPath:    userPath,
-		AdminAPIKey: adminAPIKey,
-		HTTP:        &http.Client{Timeout: 10 * time.Second},
+		BaseURL:    baseURL,
+		VerifyPath: verifyPath,
+		MCPPath:    mcpPath,
+		MCPToken:   mcpToken,
+		HTTP:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -70,25 +70,6 @@ func (c *Client) VerifyToken(token string, expectUserID int64) (*UserInfo, error
 	return &info, nil
 }
 
-// GetAdminUser 通过管理员 API Key 查询用户资料（best effort，失败不阻断）
-func (c *Client) GetAdminUser(id int64) (*UserInfo, error) {
-	if c.AdminAPIKey == "" || c.BaseURL == "" {
-		return nil, fmt.Errorf("未配置管理员 API Key")
-	}
-	body, status, err := c.request(http.MethodGet, c.UserPath+"/"+strconv.FormatInt(id, 10), func(r *http.Request) {
-		r.Header.Set("x-api-key", c.AdminAPIKey)
-	})
-	if err != nil {
-		return nil, err
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("sub2api 用户接口返回 %d", status)
-	}
-	info := parseUserJSON(body)
-	info.Sub2APIID = id
-	return &info, nil
-}
-
 func (c *Client) request(method, path string, set func(*http.Request)) ([]byte, int, error) {
 	req, err := http.NewRequest(method, c.BaseURL+path, nil)
 	if err != nil {
@@ -107,15 +88,37 @@ func (c *Client) request(method, path string, set func(*http.Request)) ([]byte, 
 	return body, resp.StatusCode, nil
 }
 
-// parseUserJSON 宽松解析：兼容顶层或 data 包裹、字段名差异（id/user_id、role/role_name）
+// parseUserJSON 宽松解析：兼容顶层或多层 data 包裹、字段名差异（id/user_id、role/role_name）。
 func parseUserJSON(body []byte) UserInfo {
-	var raw map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(body), &raw); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var raw any
+	if err := decoder.Decode(&raw); err != nil {
 		return UserInfo{}
 	}
-	if d, ok := raw["data"].(map[string]any); ok {
-		raw = d
+	return parseUserValue(raw)
+}
+
+func parseUserValue(raw any) UserInfo {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return UserInfo{}
 	}
+	// MCP 结果和普通 HTTP 响应都可能再包一层 data；优先采用真正含用户字段的
+	// 内层对象，避免把外层 request_id 之类字段误当作用户 ID。
+	if d, ok := m["data"]; ok {
+		if nested := parseUserValue(d); !nested.empty() {
+			return nested
+		}
+	}
+	return userInfoFromMap(m)
+}
+
+func (u UserInfo) empty() bool {
+	return u.Sub2APIID == 0 && u.Username == "" && u.Email == "" && u.Role == ""
+}
+
+func userInfoFromMap(raw map[string]any) UserInfo {
 	var info UserInfo
 	info.Sub2APIID = pickInt64(raw, "id", "user_id", "uid")
 	info.Username = pickString(raw, "username", "name", "nickname")
@@ -140,6 +143,8 @@ func pickString(m map[string]any, keys ...string) string {
 				}
 			case float64:
 				return strconv.FormatFloat(t, 'f', -1, 64)
+			case json.Number:
+				return t.String()
 			}
 		}
 	}
@@ -152,6 +157,12 @@ func pickInt64(m map[string]any, keys ...string) int64 {
 			switch t := v.(type) {
 			case float64:
 				return int64(t)
+			case json.Number:
+				if n, err := t.Int64(); err == nil {
+					return n
+				}
+			case int64:
+				return t
 			case string:
 				if n, err := strconv.ParseInt(t, 10, 64); err == nil {
 					return n

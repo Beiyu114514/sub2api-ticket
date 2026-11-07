@@ -3,11 +3,15 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,6 +43,28 @@ func TestProcessImageRejectsOversize(t *testing.T) {
 	copy(big, testJPEG(t, 4, 4))
 	if _, _, _, _, err := ProcessImage(big); err == nil {
 		t.Fatal("超限文件应报错")
+	}
+}
+
+// pngWithDeclaredSize 生成一个 IHDR 声明为 w×h、实际数据仍为 1×1 的 PNG，
+// 模拟压缩炸弹：文件很小，但解码器会按声明尺寸分配内存。
+func pngWithDeclaredSize(t *testing.T, w, h uint32) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+	binary.BigEndian.PutUint32(data[16:20], w)
+	binary.BigEndian.PutUint32(data[20:24], h)
+	binary.BigEndian.PutUint32(data[29:33], crc32.ChecksumIEEE(data[12:29]))
+	return data
+}
+
+func TestProcessImageRejectsHugeDimensions(t *testing.T) {
+	data := pngWithDeclaredSize(t, 30000, 30000)
+	if _, _, _, _, err := ProcessImage(data); err == nil || !strings.Contains(err.Error(), "像素过大") {
+		t.Fatalf("超大声明尺寸应被拒绝: %v", err)
 	}
 }
 
@@ -102,4 +128,3 @@ func TestKeyPrefix(t *testing.T) {
 		t.Fatal("key 前缀格式错误")
 	}
 }
-

@@ -335,7 +335,7 @@ func (p *UpdateWorkerPool) Submit(task func()) bool {
 
 ### 修复 4：上游角色与会话有效期的定期复验
 
-对于需要严格权限同步的场景，可以在 `RequireAdmin` 中增加基于时间的二次校准缓存，例如当 `time.Since(u.LastSeenAt) > 10 * time.Minute` 时，调用 `s.Sub2API.GetAdminUser(u.Sub2APIID)`，如发现角色已被变更或接口返回 404/403，则立即销毁会话：
+对于需要严格权限同步的场景，可以在 `RequireAdmin` 中增加基于时间的二次校准缓存，例如当 `time.Since(u.LastSeenAt) > 10 * time.Minute` 时，通过 TokenRouter MCP 的 `users.get` 调用 `s.Sub2API.GetAdminUser(u.Sub2APIID)`，如发现角色已被变更、MCP 工具报错或返回 404/403，则立即销毁会话：
 
 ```go
 func (s *Service) RequireAdmin() gin.HandlerFunc {
@@ -345,9 +345,9 @@ func (s *Service) RequireAdmin() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
 			return
 		}
-		// 如果是 sub2api 映射用户且较久未向源站核对，进行轻量复验
+		// 如果是 TokenRouter 映射用户且较久未向源站核对，通过 MCP 进行轻量复验
 		if u.Sub2APIID > 0 && time.Since(u.LastSeenAt) > 10*time.Minute {
-			if s.Sub2API != nil && s.Cfg.Sub2APIAdminAPIKey != "" {
+			if s.Sub2API != nil && s.Sub2API.MCPConfigured() {
 				info, err := s.Sub2API.GetAdminUser(u.Sub2APIID)
 				if err != nil || info.NormalizeRole() != "admin" {
 					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "管理员权限已被源站撤销"})

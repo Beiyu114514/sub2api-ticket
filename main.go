@@ -33,7 +33,12 @@ func main() {
 
 	settings := store.NewSettings(g)
 	tickets := store.NewTicketStore(g, settings)
-	s2a := sub2api.New(cfg.Sub2APIBaseURL, cfg.Sub2APIVerifyPath, cfg.Sub2APIUserPath, cfg.Sub2APIAdminAPIKey)
+	s2a := sub2api.New(cfg.Sub2APIBaseURL, cfg.Sub2APIVerifyPath, cfg.Sub2APIMCPPath, cfg.Sub2APIMCPToken)
+	if cfg.Sub2APIMCPToken == "" {
+		log.Printf("警告: 未配置 SUB2API_MCP_TOKEN，管理员权限不会向上游复验")
+	} else if !s2a.MCPConfigured() {
+		log.Printf("警告: MCP 端点配置无效（检查 SUB2API_BASE_URL / SUB2API_MCP_PATH），管理员权限不会向上游复验")
+	}
 	authSvc := auth.NewService(g, cfg, s2a)
 	workerPool := tgbot.NewWorkerPool(16, 256)
 	upSvc := &api.UploadService{Deps: api.Deps{G: g, Settings: settings}}

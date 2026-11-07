@@ -21,7 +21,7 @@ sub2api-ticket 是一个专为 [sub2api](https://github.com/Wei-Shaw/sub2api) �
 
 ### 为什么选择 sub2api-ticket？
 
-- **🔗 无缝集成** - 与 sub2api 原生对接，SSO 单点登录，用户体验流畅
+- **🔗 无缝集成** - 支持 TokenRouter / sub2api，SSO 单点登录，管理员复验走 MCP
 - **💬 Telegram 驱动** - 管理员在话题群处理工单，用户私聊 Bot 即可反馈问题
 - **🚀 开箱即用** - Docker 一键部署，Go 单二进制无需额外依赖
 - **🎨 现代化 UI** - Vue 3 + Tailwind CSS，支持深色模式与多语言
@@ -166,7 +166,7 @@ tar -xzf sub2api-ticket-v1.0.0-linux-amd64.tar.gz
 
 # 配置环境变量
 export SUB2API_BASE_URL="https://your-sub2api.com"
-export SUB2API_ADMIN_API_KEY="your-api-key"
+export SUB2API_MCP_TOKEN="tr_mcp_your-token"
 export PUBLIC_BASE_URL="https://ticket.example.com"
 
 # 运行
@@ -182,7 +182,7 @@ docker run -d \
   -p 8080:8080 \
   -v ./data:/data \
   -e SUB2API_BASE_URL="https://your-sub2api.com" \
-  -e SUB2API_ADMIN_API_KEY="your-api-key" \
+  -e SUB2API_MCP_TOKEN="tr_mcp_your-token" \
   -e PUBLIC_BASE_URL="https://ticket.example.com" \
   ghcr.io/beiyu114514/sub2api-ticket:latest
 ```
@@ -195,8 +195,8 @@ docker run -d \
 
 | 变量 | 说明 | 示例 |
 |------|------|------|
-| `SUB2API_BASE_URL` | sub2api 站点地址 | `https://your-sub2api.com` |
-| `SUB2API_ADMIN_API_KEY` | sub2api 管理员 API Key | 在 sub2api 后台生成 |
+| `SUB2API_BASE_URL` | TokenRouter（兼容 sub2api）站点地址 | `https://your-sub2api.com` |
+| `SUB2API_MCP_TOKEN` | TokenRouter MCP 访问令牌，需授予 `users.get` 权限 | 在 TokenRouter「MCP 管理」创建 |
 | `PUBLIC_BASE_URL` | 本服务对外 HTTPS 地址 | `https://ticket.example.com` |
 
 ### 可选环境变量
@@ -207,17 +207,28 @@ docker run -d \
 | `DB_PATH` | SQLite 数据库路径 | `data/ticket.db` |
 | `COOKIE_SAMESITE` | Cookie SameSite 策略 | `lax`（跨站 iframe 需显式设为 `none`）|
 | `SUB2API_VERIFY_PATH` | Token 校验路径 | `/api/v1/auth/me` |
+| `SUB2API_MCP_PATH` | MCP Streamable HTTP 端点路径，也可填完整 URL | `/mcp` |
 | `ADMIN_EMAIL` | 本地兜底管理员邮箱 | - |
 | `ADMIN_PASSWORD` | 本地兜底管理员密码 | - |
 | `TG_POLLING` | 使用 Long Polling（调试用）| `false` |
 | `TG_PROXY` | Telegram API 代理 | - |
 
-### sub2api 配置
+> MCP 配置也接受 `TOKENROUTER_MCP_TOKEN`、`TOKENROUTER_MCP_PATH` 两个别名；同时存在时优先使用 `SUB2API_*`。
 
-1. **生成管理员 API Key**
-   - 登录 sub2api 管理后台
-   - 进入「系统设置」→「管理员 API」
-   - 生成 API Key 并填入 `.env` 的 `SUB2API_ADMIN_API_KEY`
+### TokenRouter MCP 配置
+
+TokenRouter 将逐步废弃管理员 API Key。本服务通过 MCP 的只读 `users.get` 操作查询用户资料并复验管理员角色。
+
+> 迁移说明：`SUB2API_ADMIN_API_KEY` 已移除，服务不会再发送 `x-api-key`；请改用下面的 MCP 令牌。
+
+1. **创建 MCP 访问令牌**
+   - 登录 TokenRouter 管理后台
+   - 进入「MCP 管理」（`/admin/mcp`）
+   - 新建访问令牌，至少授予 `users.get`（查看用户详情）权限
+   - 将生成的 `tr_mcp_...` 令牌填入 `.env` 的 `SUB2API_MCP_TOKEN`
+   - 如果 MCP 端点不是 `https://<站点>/mcp`，再设置 `SUB2API_MCP_PATH`（支持完整 URL）
+
+> 令牌所属账号必须保持管理员身份；令牌撤销、过期或无 `users.get` 权限时，工单系统的管理员复验会失败并拒绝管理操作。
 
 2. **添加自定义菜单**
    - 进入「系统设置」→「自定义菜单页面」
