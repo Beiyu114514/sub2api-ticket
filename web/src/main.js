@@ -4,21 +4,24 @@ import { router } from './router'
 import { api } from './api'
 import { store } from './store'
 import { applyTheme } from './theme'
-import './i18n'
+import { setLang, lang as appLang } from './i18n'
+import 'vue-sonner/style.css'
 import './style.css'
 
 // —— iframe 入口参数处理：theme / lang / SSO token ——
 const q = new URLSearchParams(location.search)
-const theme = q.get('theme')
-const lang = q.get('lang')
-if (theme === 'light' || theme === 'dark') {
-  localStorage.setItem('ticket_theme', theme)
+const themeParam = q.get('theme')
+const langParam = q.get('lang')
+
+if (themeParam === 'light' || themeParam === 'dark') {
+  localStorage.setItem('ticket_theme', themeParam)
 } else if (!localStorage.getItem('ticket_theme')) {
   localStorage.setItem('ticket_theme', 'light')
 }
-if (lang === 'en' || lang === 'zh') localStorage.setItem('ticket_lang', lang)
+if (langParam === 'en' || langParam === 'zh') setLang(langParam)
+
 applyTheme(localStorage.getItem('ticket_theme'))
-window.__appLang = localStorage.getItem('ticket_lang') || 'zh'
+window.__appLang = appLang.value
 
 async function boot() {
   const token = q.get('token')

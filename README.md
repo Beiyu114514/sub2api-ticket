@@ -427,12 +427,50 @@ docker build -t sub2api-ticket:latest .
 
 ### 前端
 
-- **框架**：Vue 3 (Composition API)
+- **框架**：Vue 3 (Composition API, `<script setup>`)
 - **路由**：Vue Router 4
-- **样式**：Tailwind CSS 4
+- **UI**：[shadcn-vue](https://www.shadcn-vue.com/)（复制到 `web/src/components/ui`，底层基于 [reka-ui](https://reka-ui.com/)）
+- **样式**：Tailwind CSS 4 + shadcn 设计令牌（`--primary` / `--muted` 等语义色）
+- **图标**：[Lucide](https://lucide.dev/)（`@lucide/vue`）
+- **提示**：[vue-sonner](https://vue-sonner.vercel.app/) Toast
 - **构建**：Vite 6
 - **状态管理**：简单响应式 Store
-- **国际化**：内置 i18n 方案
+- **国际化**：内置 i18n 方案（中 / 英，可运行时切换）
+
+#### 前端目录结构
+
+```
+web/src/
+├─ components/
+│  ├─ ui/              # shadcn-vue 组件（可直接改，属于项目源码）
+│  ├─ layout/          # 应用外壳：侧边栏 / 顶栏 / 移动端抽屉 / 用户菜单
+│  ├─ ImageUploader.vue
+│  ├─ PriorityLabel.vue
+│  └─ StatusBadge.vue
+├─ lib/                # cn() 工具、日期格式化、导航配置
+├─ views/              # 页面：列表 / 新建 / 详情 / 设置 / 管理后台 / 登录
+├─ i18n.js             # 双语字典 + 响应式语言切换
+├─ style.css           # Tailwind + shadcn 主题令牌（亮/暗）
+└─ theme.js            # 主题读写（跟随 sub2api 的 ?theme= 参数）
+```
+
+#### 二次开发：新增一个 shadcn 组件
+
+组件已经按 shadcn-vue 官方 registry 的 `new-york-v4` 风格落在 `web/src/components/ui/`，
+新增时可直接取用官方产物（无需 CLI，也不依赖网络代理）：
+
+```bash
+cd web
+# 例：拿一个 combobox（combobox 依赖 popover + command）
+curl -s https://shadcn-vue.com/r/styles/new-york-v4/command.json | npx --yes shadcn-vue@latest add command
+```
+
+或者手动：从 <https://www.shadcn-vue.com/docs/components> 复制 `.vue` 到 `web/src/components/ui/<name>/`，
+把 `import { cn } from "cn"` 改成 `@/lib/utils`、`@/registry/new-york-v4/ui/*` 改成 `~/components/ui/*` 即可。
+`@` 与 `~` 都已指向 `web/src`（见 `vite.config.js`）。
+
+> 说明：`shadcn-vue` 的组件是**复制进仓库的源码**，不是 npm 依赖，所以升级靠重新拉取而不是改版本号；
+> 主题色统一在 `web/src/style.css` 的 `:root` / `.dark` 中调整，改一处全站生效。
 
 ### DevOps
 
