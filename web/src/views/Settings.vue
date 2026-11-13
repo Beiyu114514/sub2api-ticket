@@ -69,7 +69,7 @@ async function unbind() {
     await api.del('/api/v1/telegram/bind')
     bound.value = false
     bindLink.value = ''
-    toast.success(t('saved'))
+    toast.success(t('unboundDone'))
   } catch (e) {
     err.value = e.message
     toast.error(e.message)

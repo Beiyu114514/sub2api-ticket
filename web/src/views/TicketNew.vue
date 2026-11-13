@@ -136,7 +136,7 @@ async function submit() {
 
             <Alert v-if="err" variant="destructive">
               <AlertCircle />
-              <AlertTitle>{{ t('saved_error') }}</AlertTitle>
+              <AlertTitle>{{ t('submitFailed') }}</AlertTitle>
               <AlertDescription>{{ err }}</AlertDescription>
             </Alert>
 

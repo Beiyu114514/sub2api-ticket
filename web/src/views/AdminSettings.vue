@@ -65,6 +65,13 @@ const tab = ref('telegram')
 
 const botHealthy = computed(() => !!status.value?.bot_ok)
 
+/** 数字输入兜底：0 是合法值，不能被 || 吞掉 */
+function numOr(value, fallback) {
+  if (value === '' || value === null || value === undefined) return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
 async function load() {
   try {
     const res = await api.get('/api/v1/admin/settings')
@@ -131,7 +138,7 @@ async function save() {
 
     payload.storage_mode = storageMode.value
     payload.storage_local_dir = storageLocalDir.value
-    payload.storage_url_ttl_hrs = Number(storageTTL.value) || 168
+    payload.storage_url_ttl_hrs = numOr(storageTTL.value, 168)
     const s3c = { ...s3.value }
     // secret 留空 = 保持原值，不提交该字段
     if (String(s3c.secret_key || '').trim() === '') delete s3c.secret_key
@@ -140,9 +147,9 @@ async function save() {
     payload.assistant_enabled = aiEnabled.value
     payload.assistant_base_url = aiBaseURL.value.trim()
     payload.assistant_model = aiModel.value.trim()
-    payload.assistant_temperature = Number(aiTemp.value) || 0.3
-    payload.assistant_silent_minutes = Number(aiSilent.value) || 5
-    payload.assistant_max_replies = Number(aiMaxReplies.value) || 5
+    payload.assistant_temperature = numOr(aiTemp.value, 0.3)
+    payload.assistant_silent_minutes = numOr(aiSilent.value, 5)
+    payload.assistant_max_replies = numOr(aiMaxReplies.value, 5)
     payload.assistant_system_prompt = aiPrompt.value
     if (aiAPIKey.value.trim() !== '') payload.assistant_api_key = aiAPIKey.value.trim()
     aiAPIKey.value = ''
@@ -176,6 +183,7 @@ async function stopWebhook() {
   busy.value = true
   try {
     await api.post('/api/v1/admin/telegram/stop-webhook')
+    toast.success(t('webhookOff'))
     await refreshStatus()
   } catch (e) {
     toast.error(e.message)
@@ -188,7 +196,7 @@ async function testSend() {
   busy.value = true
   try {
     await api.post('/api/v1/admin/telegram/test')
-    toast.success(t('saved'))
+    toast.success(t('testSent'))
   } catch (e) {
     toast.error(e.message)
   } finally {

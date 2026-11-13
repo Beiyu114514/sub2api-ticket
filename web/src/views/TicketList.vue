@@ -63,7 +63,10 @@ const stats = computed(() => {
 })
 
 function syncQuery() {
-  const query = {}
+  // 保留 theme / lang 等 iframe 入口参数，只更新筛选条件
+  const query = { ...route.query }
+  delete query.status
+  delete query.q
   if (status.value) query.status = status.value
   if (q.value) query.q = q.value
   router.replace({ query }).catch(() => {})

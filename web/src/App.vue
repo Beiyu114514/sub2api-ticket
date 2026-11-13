@@ -1,5 +1,4 @@
 <script setup>
-import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { store } from './store'
 import { t } from './i18n'
@@ -11,9 +10,6 @@ import { Toaster } from './components/ui/sonner'
 import { TooltipProvider } from './components/ui/tooltip'
 
 const route = useRoute()
-
-/** 启动失败或未登录时才显示独立页面，其余都进主壳 */
-const isAuthScreen = computed(() => route.path === '/login' || !!store.bootError)
 </script>
 
 <template>

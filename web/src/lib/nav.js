@@ -3,7 +3,6 @@ import { store } from '@/store'
 import { t } from '@/i18n'
 import {
   Ticket,
-  Inbox,
   Plus,
   Settings,
   SlidersHorizontal,
@@ -40,5 +39,3 @@ export function useNavGroups() {
     return groups
   })
 }
-
-export const inboxIcon = Inbox

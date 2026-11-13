@@ -55,9 +55,10 @@ async function uploadFiles(files) {
 }
 
 function onPick(e) {
-  const files = e.target.files
+  // FileList 是实时集合，必须先把文件复制出来再清空 input，否则文件会被一起清掉
+  const files = [...(e.target.files || [])]
   e.target.value = ''
-  if (files?.length) uploadFiles(files)
+  if (files.length) uploadFiles(files)
 }
 
 function onDrop(e) {

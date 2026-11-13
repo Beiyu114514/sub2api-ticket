@@ -65,7 +65,8 @@ async function load(silent = false) {
       scrollBottom()
     }
   } catch (e) {
-    err.value = e.message
+    // 静默轮询失败时保留已有内容，避免网络抖动把整个会话清空
+    if (!silent || !ticket.value) err.value = e.message
   } finally {
     loading.value = false
   }
@@ -248,7 +249,7 @@ onUnmounted(() => {
                     {{ t('reopenTicket') }}
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    v-if="ticket.status === 'open'"
+                    v-if="store.isAdmin && ticket.status === 'open'"
                     :disabled="actionBusy"
                     @select="setStatus('pending')"
                   >

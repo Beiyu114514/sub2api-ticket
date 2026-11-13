@@ -75,6 +75,7 @@ const dicts = {
     content: '问题描述',
     contentPh: '请尽量描述：做了什么操作、期望结果、实际结果；如为 API 报错请附上请求示例与时间。',
     submitted: '已提交',
+    submitFailed: '提交失败',
     submit: '提交工单',
     submitting: '提交中…',
     firstReplyHint: '提交后将自动创建工单。',
@@ -153,6 +154,7 @@ const dicts = {
     step2: '2. 在对话中点击「开始 / START」按钮',
     step3: '3. 看到绑定成功提示即可',
     unbindConfirm: '确定要解绑 Telegram 吗？',
+    unboundDone: '已解绑',
 
     // 登录
     loginTitle: '登录工单系统',
@@ -212,6 +214,7 @@ const dicts = {
     setupWebhook: '启用 Webhook',
     stopWebhook: '停用 Webhook',
     testSend: '发送测试消息',
+    testSent: '测试消息已发送',
     webhookOn: 'Webhook 已启用',
     webhookOff: 'Webhook 未启用',
     needPublicBaseURL: '服务端需配置 PUBLIC_BASE_URL 后才能启用 Webhook。',
@@ -293,6 +296,7 @@ const dicts = {
     content: 'Description',
     contentPh: 'Describe what you did, expected vs actual result. For API errors, attach the request and timestamp.',
     submitted: 'Submitted',
+    submitFailed: 'Submit failed',
     submit: 'Submit',
     submitting: 'Submitting…',
     firstReplyHint: 'A ticket will be created after you submit.',
@@ -369,6 +373,7 @@ const dicts = {
     step2: '2. Press START in the chat',
     step3: '3. You will see a success message',
     unbindConfirm: 'Unbind Telegram?',
+    unboundDone: 'Unlinked',
 
     loginTitle: 'Sign in to tickets',
     loginHint: 'Enter through the sub2api sidebar. The form below is for the local admin account only.',
@@ -426,6 +431,7 @@ const dicts = {
     setupWebhook: 'Enable webhook',
     stopWebhook: 'Disable webhook',
     testSend: 'Send test message',
+    testSent: 'Test message sent',
     webhookOn: 'Webhook enabled',
     webhookOff: 'Webhook disabled',
     needPublicBaseURL: 'Set PUBLIC_BASE_URL on the server to enable the webhook.',
