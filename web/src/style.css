@@ -1,52 +1,158 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* 手动控制暗色模式（跟随 sub2api 传来的 theme 参数），不用系统偏好 */
 @custom-variant dark (&:where(.dark, .dark *));
 
-html, body, #app {
-  height: 100%;
+/* ------------------------------------------------------------------
+ * shadcn/ui 设计令牌（Tailwind v4 @theme inline 方式接入）
+ * 语义色板与 https://ui.shadcn.com 的 neutral 主题一致，
+ * 组件层全部使用 bg-background / text-muted-foreground 这类语义 class，
+ * 因此换主题只需改下面 :root / .dark 里的变量。
+ * ------------------------------------------------------------------ */
+@theme inline {
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
 }
 
-body {
-  @apply bg-slate-100 text-slate-800 antialiased;
+/* sub2api 品牌蓝作为 primary，其余维持 neutral 语义色 */
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.546 0.215 262.9);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.596 0.145 163.2);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.769 0.155 70.1);
+  --warning-foreground: oklch(0.208 0.02 70);
+  --info: oklch(0.588 0.158 241.9);
+  --info-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.546 0.215 262.9);
+
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
 }
 
-.dark body {
-  @apply bg-slate-950 text-slate-200;
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.196 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.623 0.188 259.8);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.696 0.15 162.5);
+  --success-foreground: oklch(0.145 0 0);
+  --warning: oklch(0.828 0.152 84.1);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.707 0.133 240.5);
+  --info-foreground: oklch(0.145 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.623 0.188 259.8);
+
+  --sidebar: oklch(0.178 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
 }
 
-/* 通用卡片/输入样式，集中复用 */
-.card {
-  @apply bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* 细滚动条，贴近 shadcn 文档站观感 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
-.btn,
-.btn-primary,
-.btn-ghost,
-.btn-danger {
-  @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
-    transition-colors select-none cursor-pointer
-    disabled:opacity-50 disabled:cursor-not-allowed;
-}
-
-.btn-primary {
-  @apply bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800;
-}
-
-.btn-ghost {
-  @apply text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800;
-}
-
-.btn-danger {
-  @apply bg-rose-600 text-white hover:bg-rose-700;
-}
-
-.input {
-  @apply w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900
-    px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/60 focus:border-blue-500
-    placeholder:text-slate-400 dark:placeholder:text-slate-600;
-}
-
-.label {
-  @apply block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5;
-}
